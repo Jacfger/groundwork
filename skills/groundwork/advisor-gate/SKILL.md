@@ -188,9 +188,9 @@ The advisor MUST anchor claims to specific artifacts:
 
 ## Implementation Notes
 
-- Invoke the advisor using `background_task` with **`agent: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities.
+- Invoke the advisor using `task` with **`subagent_type: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities.
   - **The advisor agent reads files directly** — point it to files to inspect. It will read and ground its advice in actual code.
-- **Output is persisted automatically** — `background_output` reads from the persisted artifact at `.opencode/background-tasks/`.
+- **Output is persisted automatically** — the task result is returned directly.
 - Track escalation count; avoid uncontrolled loops (max 3 escalations per task before surfacing to user).
 - Fallback only if `advisor` is unavailable: clearly label "simulated advisor checkpoint" and state why.
 
