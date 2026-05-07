@@ -1011,6 +1011,35 @@ export const GroundworkPlugin = async ({ client, directory }) => {
         },
       }),
 
+      background_input: tool({
+        description: 'Send input or interrupt signal to a running background task. Useful when a task is stuck waiting for input or needs to be interrupted.',
+        args: {
+          task_id: z.string().describe('Task ID to send input to'),
+          data: z.string().describe('Text input to send (e.g., "yes\\n", "\\x03" for Ctrl+C, "\\x04" for Ctrl+D)'),
+        },
+        async execute(args) {
+          try {
+            const task = manager.getTask(args.task_id)
+            if (!task) return `[ERROR] Task not found: ${args.task_id}`
+            if (task.status !== 'running') return `[ERROR] Cannot send input to task with status "${task.status}". Task must be running.`
+            if (!task.sessionID) return `[ERROR] Task has no session ID.`
+            
+            // Send the input as a prompt to the background session
+            await client.session.prompt({
+              path: { id: task.sessionID },
+              body: {
+                noReply: true,
+                parts: [{ type: 'text', text: args.data, synthetic: true }],
+              },
+            })
+            
+            return `Input sent to task ${args.task_id}: "${args.data}"`
+          } catch (error) {
+            return `[ERROR] Failed to send input: ${error instanceof Error ? error.message : String(error)}`
+          }
+        },
+      }),
+
       handoff_session: tool({
         description: 'Create a new session with the handoff prompt as an editable draft. Called after /handoff command generates the summary.',
         args: {
