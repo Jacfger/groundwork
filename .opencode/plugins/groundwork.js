@@ -1446,8 +1446,49 @@ export const GroundworkPlugin = async ({ client, directory }) => {
         },
       }),
 
+      background_wait: tool({
+        description: 'Block until a background task completes and return its result. Use instead of polling background_output/background_list.',
+        args: {
+          task_id: z.string().describe('Task ID to wait for'),
+          timeout: z.number().optional().describe('Max wait time in seconds (default: 3600 = 1 hour, max: 7200 = 2 hours)'),
+        },
+        async execute(args) {
+          try {
+            let task = manager.getTask(args.task_id)
+            if (!task) {
+              await manager.recoverStateForTask(args.task_id)
+              task = manager.getTask(args.task_id)
+            }
+            if (!task) return `Task not found: ${args.task_id}`
+            
+            const timeoutMs = Math.min((args.timeout ?? 3600) * 1000, 7200000)
+            const isActive = (t) => t.status === 'pending' || t.status === 'running' || t.status === 'waiting' || t.completing
+            const start = Date.now()
+            
+            while (isActive(task) && Date.now() - start < timeoutMs) {
+              await new Promise(r => setTimeout(r, 2000))
+              const current = manager.getTask(args.task_id)
+              if (!current) return `Task was deleted: ${args.task_id}`
+              task = current
+            }
+            
+            if (isActive(task)) {
+              return `Task ${args.task_id} still ${task.status} after ${formatDuration(new Date(start), new Date())}. Use background_output to check.`
+            }
+            
+            manager.markRead(task.id)
+            const persisted = await persistence.read(task.id, task.parentSessionID, manager.directory)
+            if (persisted && !persisted.endsWith('(No text output)') && !persisted.endsWith('(No messages found)') && !persisted.endsWith('(No assistant or tool response found)')) return persisted
+            if (task.status === 'completed') return await formatTaskResult(task, client)
+            return formatTaskStatus(task)
+          } catch (error) {
+            return `Error waiting for task: ${error instanceof Error ? error.message : String(error)}`
+          }
+        },
+      }),
+
       background_output: tool({
-        description: 'Get background task output. Call after notification.',
+        description: 'Get background task output. Call after notification.'
         args: {
           task_id: z.string().describe('Task ID to get output from'),
           block: z.boolean().optional().describe('Wait for completion (default: false)'),

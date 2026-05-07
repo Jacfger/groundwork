@@ -57,7 +57,8 @@ The advisor NEVER opens with filler phrases: "Great question!", "That's a great 
 1. Keep one executor accountable for end-to-end progress.
 2. Advisor gives guidance only: insight, plan, correction, or stop signal.
 3. Advisor does not own user-facing output and does not run task tools directly.
-4. Advisor is read-only — no sunk cost bias, no implementation attachment.
+4. **Advisor NEVER uses `background_task`**. Background tasks are for executors only. The advisor provides guidance; the executor implements.
+5. Advisor is read-only — no sunk cost bias, no implementation attachment.
     5. At escalation checkpoints, invoke the `advisor` subagent for guidance.
 6. Escalate only when the executor cannot confidently choose a safe next move.
 7. Record each escalation reason and the chosen follow-up action.
@@ -190,6 +191,7 @@ The advisor MUST anchor claims to specific artifacts:
 
 - Invoke the advisor using `task` with **`subagent_type: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities.
   - **The advisor agent reads files directly** — point it to files to inspect. It will read and ground its advice in actual code.
+- **Advisor is READ-ONLY. The advisor MUST NOT call `background_task`, `background_output`, `background_list`, or any other background task tools.** The advisor provides strategic guidance only; it does not execute work or delegate to other agents.
 - **Output is persisted automatically** — the task result is returned directly.
 - Track escalation count; avoid uncontrolled loops (max 3 escalations per task before surfacing to user).
 - Fallback only if `advisor` is unavailable: clearly label "simulated advisor checkpoint" and state why.

@@ -37,8 +37,11 @@ Invoke the relevant skill tool BEFORE any response or action. 1% chance = invoke
 
 ```
 background_task(description="...", prompt="...", agent="explore")  → Launch
-background_list()                                                    → Check status (like pty_list)
+background_wait(task_id="bg_xxx", timeout=3600)                     → Block until task completes (replaces polling)
 background_output(task_id="bg_xxx")                                  → Get result (after notification)
+background_list()                                                    → Check status (like pty_list)
+background_status(task_id="bg_xxx")                                  → Detailed health info for one task
+background_stream(task_id="bg_xxx", offset=0)                        → Get partial output from running task
 background_cancel(task_id="bg_xxx")                                  → Cancel one
 background_cancel(all=true)                                          → Cancel all
 background_input(task_id="bg_xxx", data="...")                       → Send input or interrupt signal to a running background task. Useful when a task is stuck waiting for input or needs to be interrupted.
@@ -46,7 +49,10 @@ background_input(task_id="bg_xxx", data="...")                       → Send in
 
 **Workflow:**
 1. Launch with `background_task`
-2. Continue working — do NOT poll
+2. **Do NOT poll.** Choose ONE of these paths:
+   - **Path A — Fire and forget**: Launch tasks, continue with other work. The system will notify you when tasks complete.
+   - **Path B — Block and wait**: Use `background_wait(task_id)` when you need the result before proceeding. This blocks without spamming.
+   - **Path C — Stream progress**: Use `background_stream(task_id)` for long-running tasks where you want periodic progress updates.
 3. When `<system-reminder>` notification arrives, call `background_output`
 4. You can launch MULTIPLE tasks in parallel for max throughput
 
@@ -68,14 +74,42 @@ When a background task fails, the result from `background_output` will include a
 - **Retry vs Cancel**: Retry a task if the failure appears transient (e.g., network timeout, temporary resource unavailability). Cancel the task if the failure is persistent or indicates a fundamental issue (e.g., syntax error, missing dependency).
 - **Interrupt stuck tasks**: If a task is hanging or stuck waiting for input, use `background_input(task_id="bg_xxx", data="\x03")` to send a Ctrl+C interrupt signal.
 
+### Anti-Polling Rules (CRITICAL)
+
+**NEVER do this:**
+```
+❌ while (task.running) { background_list(); background_status(); background_output(); }
+```
+
+**This is spam. It wastes tokens, burns context, and achieves nothing.**
+
+**Instead:**
+- **Waiting on one task?** Use `background_wait(task_id)` — it blocks efficiently with a 2s polling interval internally.
+- **Waiting on multiple tasks?** Launch them all, then do other work. The system notifies you when each completes.
+- **Need progress updates?** Use `background_stream(task_id)` for periodic snapshots without spam.
+- **Just checking if done?** Wait for the `<system-reminder>` notification, then call `background_output` ONCE.
+
+### When to Use Each Tool
+
+| Scenario | Tool | Why |
+|----------|------|-----|
+| Need result before continuing | `background_wait` | Blocks efficiently, returns result directly |
+| Task completed, get output | `background_output` | One-shot retrieval after notification |
+| Monitor long-running task | `background_stream` | Get partial output without blocking |
+| Check if task is stuck | `background_status` | Health check: duration, tool calls, last activity |
+| See all active tasks | `background_list` | Quick status overview |
+| Cancel stuck/hanging task | `background_cancel` | Clean termination |
+| Send input to running task | `background_input` | Interactive input or Ctrl+C interrupt |
+
 ### Background Task Best Practices
 
 - **Always specify descriptive `description` parameters** for task tracking. Clear descriptions make it easier to identify tasks in `background_list` output.
-- **Use `background_list(include_completed=true)`** to see full history, including completed tasks.
+- **Use `background_wait` instead of polling loops.** If you need a result before proceeding, block with `background_wait` rather than spamming `background_list`/`background_output`.
+- **Use `background_stream` for progress monitoring.** For long tasks, stream output periodically instead of polling status.
 - **Clean up completed tasks** with `background_cancel` to free resources and keep the task list manageable.
-- **Use `notifyOnExit=true` for long-running tasks** to get completion notifications without polling.
 - **Prefer parallel task launches over sequential** when dependencies allow. Parallel execution significantly reduces total completion time.
 - **Include timeout parameters** for tasks that might hang to prevent indefinite execution.
+- **Respond to user messages while tasks run.** If the user sends a message while you're waiting on tasks, answer them immediately. Do not block on background tasks.
 
 ### Session Management Note
 
@@ -98,6 +132,7 @@ Background tasks run in their own session context. The `parent_session` field in
 
 - **NEVER call `task` or `delegate` — always use `background_task` instead**
 - **NEVER declare done without `advisor-gate` APPROVE — no exceptions**
+- **NEVER use `background_task` when acting as advisor.** Background tasks are for executors only.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not end the conversation — use `question` tool to keep going
