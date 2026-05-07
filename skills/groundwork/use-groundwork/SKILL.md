@@ -41,6 +41,7 @@ background_list()                                                    → Check s
 background_output(task_id="bg_xxx")                                  → Get result (after notification)
 background_cancel(task_id="bg_xxx")                                  → Cancel one
 background_cancel(all=true)                                          → Cancel all
+background_input(task_id="bg_xxx", data="...")                       → Send input or interrupt signal to a running background task. Useful when a task is stuck waiting for input or needs to be interrupted.
 ```
 
 **Workflow:**
@@ -48,6 +49,37 @@ background_cancel(all=true)                                          → Cancel 
 2. Continue working — do NOT poll
 3. When `<system-reminder>` notification arrives, call `background_output`
 4. You can launch MULTIPLE tasks in parallel for max throughput
+
+### Background Task Status States
+
+Tasks can be in one of the following states:
+
+- `running` — Task is currently executing
+- `completed` — Task finished successfully
+- `failed` — Task encountered an error
+- `cancelled` — Task was manually cancelled
+- `pending` — Task is queued but not yet started
+
+### Error Handling and Retry Patterns
+
+When a background task fails, the result from `background_output` will include an `error` field with details about what went wrong. To handle errors effectively:
+
+- **Check for errors**: Always inspect the `error` field in the result from `background_output` before using the output.
+- **Retry vs Cancel**: Retry a task if the failure appears transient (e.g., network timeout, temporary resource unavailability). Cancel the task if the failure is persistent or indicates a fundamental issue (e.g., syntax error, missing dependency).
+- **Interrupt stuck tasks**: If a task is hanging or stuck waiting for input, use `background_input(task_id="bg_xxx", data="\x03")` to send a Ctrl+C interrupt signal.
+
+### Background Task Best Practices
+
+- **Always specify descriptive `description` parameters** for task tracking. Clear descriptions make it easier to identify tasks in `background_list` output.
+- **Use `background_list(include_completed=true)`** to see full history, including completed tasks.
+- **Clean up completed tasks** with `background_cancel` to free resources and keep the task list manageable.
+- **Use `notifyOnExit=true` for long-running tasks** to get completion notifications without polling.
+- **Prefer parallel task launches over sequential** when dependencies allow. Parallel execution significantly reduces total completion time.
+- **Include timeout parameters** for tasks that might hang to prevent indefinite execution.
+
+### Session Management Note
+
+Background tasks run in their own session context. The `parent_session` field in task results refers to the session that launched the task, while the `session` field refers to the task's own execution session. This isolation ensures that task state does not interfere with the parent session's context.
 
 ## Skill Triggers
 

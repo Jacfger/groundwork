@@ -83,17 +83,141 @@ function extractMessages(result) {
   return []
 }
 
+/**
+ * Extract failure context from the last N messages of a task session.
+ * Used to provide detailed error context when background tasks fail.
+ */
+async function extractFailureContext(task, client, maxMessages = 10) {
+  if (!task.sessionID) return null
+  try {
+    const resp = await client.session.messages({ path: { id: task.sessionID } })
+    const messages = extractMessages(resp)
+    if (!messages.length) return null
+
+    // Get last N messages for context
+    const lastMessages = messages.slice(-maxMessages)
+    const context = []
+
+    for (const msg of lastMessages) {
+      const role = msg.info?.role || 'unknown'
+      const parts = msg.parts || []
+      const msgContent = []
+
+      for (const part of parts) {
+        if (part.type === 'text' && part.text) {
+          msgContent.push(part.text)
+        } else if (part.type === 'reasoning' && part.text) {
+          msgContent.push(`[Reasoning] ${part.text}`)
+        } else if (part.type === 'thinking' && part.text) {
+          msgContent.push(`[Thinking] ${part.text}`)
+        } else if (part.type === 'tool' && part.state) {
+          if (part.state.status === 'error') {
+            msgContent.push(`[Tool Error: ${part.tool}] ${part.state.title || 'unknown error'}`)
+          } else if (part.state.status === 'completed') {
+            msgContent.push(`[Tool: ${part.tool}] ${part.state.title || 'completed'}`)
+          }
+        }
+      }
+
+      if (msgContent.length > 0) {
+        context.push({
+          role,
+          content: msgContent.join('\n'),
+          timestamp: msg.info?.timestamp || msg.info?.created_at || null
+        })
+      }
+    }
+
+    return {
+      taskId: task.id,
+      status: task.status,
+      error: task.error || null,
+      messageCount: messages.length,
+      contextMessages: context,
+      extractedAt: new Date().toISOString()
+    }
+  } catch (err) {
+    return {
+      taskId: task.id,
+      status: task.status,
+      error: task.error || null,
+      extractionError: err instanceof Error ? err.message : String(err),
+      extractedAt: new Date().toISOString()
+    }
+  }
+}
+
 function formatTaskStatus(task) {
-  const duration = task.status === 'pending'
+  const duration = task.status === 'pending' || task.status === 'waiting'
     ? formatDuration(task.queuedAt, undefined)
     : formatDuration(task.startedAt, task.completedAt)
   const statusNote = task.completing ? 'completing...'
     : task.status === 'pending' ? 'queued'
+    : task.status === 'waiting' ? 'waiting'
     : task.status === 'running' ? 'running'
     : task.status === 'error' ? 'failed'
     : task.status === 'interrupt' ? 'interrupted'
     : task.status
   return `Task ${task.id}: ${task.description} [${task.agent}] — ${statusNote} (${duration})`
+}
+
+function formatFailureContext(task, messages) {
+  if (!messages || messages.length === 0) return ''
+  
+  const lines = []
+  lines.push('=== Failure Context ===')
+  lines.push('')
+  
+  // Task progress info
+  if (task.progress) {
+    lines.push(`Tool calls made: ${task.progress.toolCalls || 0}`)
+    if (task.progress.lastTool) {
+      lines.push(`Last tool used: ${task.progress.lastTool}`)
+    }
+    if (task.progress.lastUpdate) {
+      const idleTime = formatDuration(task.progress.lastUpdate, new Date())
+      lines.push(`Time since last activity: ${idleTime}`)
+    }
+  }
+  
+  // Get last 10 messages before failure
+  const lastMessages = messages.slice(-10)
+  lines.push('')
+  lines.push(`Last ${lastMessages.length} messages before failure:`)
+  lines.push('')
+  
+  for (const msg of lastMessages) {
+    const role = msg.info?.role || 'unknown'
+    const timestamp = msg.info?.timestamp ? new Date(msg.info.timestamp).toISOString() : ''
+    
+    if (role === 'assistant') {
+      lines.push(`[${timestamp}] Assistant:`)
+      for (const part of msg.parts || []) {
+        if (part.type === 'text' && part.text) {
+          lines.push(`  ${truncateText(part.text, 200)}`)
+        } else if (part.type === 'tool' && part.state) {
+          if (part.state.status === 'error') {
+            lines.push(`  [Tool ERROR: ${part.tool}] ${part.state.title || 'unknown error'}`)
+          } else {
+            lines.push(`  [Tool: ${part.tool}] ${part.state.title || ''}`)
+          }
+        }
+      }
+    } else if (role === 'tool') {
+      lines.push(`[${timestamp}] Tool result:`)
+      for (const part of msg.parts || []) {
+        if (part.type === 'text' && part.text) {
+          lines.push(`  ${truncateText(part.text, 200)}`)
+        }
+      }
+    }
+    lines.push('')
+  }
+  
+  // Summary
+  lines.push('=== End Failure Context ===')
+  
+  return lines.join('\n')
 }
 
 async function formatTaskResult(task, client) {
@@ -137,7 +261,18 @@ async function formatTaskResult(task, client) {
         }
       }
       const content = extracted.filter(t => t.length > 0).join('\n\n')
-      if (content.length > bestContent.length) bestContent = content
+      
+      // For failed tasks, append failure context
+      let failureContext = ''
+      if (task.status === 'error' || task.status === 'interrupt') {
+        failureContext = extractFailureContext(task, messages)
+      }
+      
+      const fullContent = failureContext 
+        ? content + '\n\n' + failureContext 
+        : content
+      
+      if (fullContent.length > bestContent.length) bestContent = fullContent
       if (msgCount === prevMsgCount && bestContent) return header + bestContent
       prevMsgCount = msgCount
       if (attempt >= maxAttempts - 1) return header + (bestContent || '(No text output)')
@@ -153,6 +288,8 @@ async function formatTaskResult(task, client) {
 
 function buildNotificationText({ task, duration, statusText, allComplete, remainingCount, completedTasks, artifactPath }) {
   const desc = task.description || task.id
+  const isFailed = task.status === 'error' || task.status === 'interrupt' || task.status === 'cancelled'
+
   if (allComplete) {
     const succeeded = completedTasks.filter(t => t.status === 'completed')
     const failed = completedTasks.filter(t => t.status !== 'completed')
@@ -162,17 +299,176 @@ function buildNotificationText({ task, duration, statusText, allComplete, remain
     if (!lines.length) lines.push(`${task.id}: ${desc} [${task.status}]`)
     return `<system-reminder>\n[ALL DONE]\n${lines.join('\n')}${artifactPath ? `\nArtifact: ${artifactPath}` : ''}\n</system-reminder>`
   }
-  return `<system-reminder>\n[${statusText}] ${task.id}: ${desc} (${duration})${task.error ? ` — ${task.error}` : ''}${remainingCount > 0 ? ` — ${remainingCount} remaining` : ''}\n</system-reminder>`
+
+  // Build failure context for single task notification
+  let failureContext = ''
+  if (task.status === 'error' || task.status === 'interrupt') {
+    const toolCalls = task.progress?.toolCalls || 0
+    const lastTool = task.progress?.lastTool
+    const parts = []
+    if (toolCalls > 0) parts.push(`after ${toolCalls} tool calls`)
+    if (lastTool) parts.push(`last: ${lastTool}`)
+    if (parts.length) failureContext = ` — ${parts.join(', ')}`
+    failureContext += artifactPath ? `\nCheck artifact for full details: ${artifactPath}` : ''
+  }
+  
+  return `<system-reminder>\n[${statusText}] ${task.id}: ${desc} (${duration})${task.error ? ` — ${task.error}` : ''}${failureContext}${remainingCount > 0 ? ` — ${remainingCount} remaining` : ''}\n</system-reminder>`
 }
 
-function formatTaskList(tasks, sessionID) {
+const STUCK_THRESHOLD_MS = 60_000
+
+function formatActivityTime(lastUpdate) {
+  if (!lastUpdate) return ''
+  const ms = Date.now() - lastUpdate.getTime()
+  if (ms < 5000) return 'active now'
+  if (ms < 60_000) return `active ${Math.floor(ms / 1000)}s ago`
+  if (ms < 3600_000) return `active ${Math.floor(ms / 60_000)}m ago`
+  return `active ${Math.floor(ms / 3600_000)}h ago`
+}
+
+function isTaskStuck(task) {
+  if (task.status !== 'running') return false
+  const lastUpdate = task.progress?.lastUpdate ?? task.startedAt
+  if (!lastUpdate) return false
+  return Date.now() - lastUpdate.getTime() > STUCK_THRESHOLD_MS
+}
+
+function formatTaskList(tasks, sessionID, options = {}) {
   if (!tasks.length) return `No background tasks for ${sessionID}.`
-  const lines = tasks.map(t => {
-    const status = t.status === 'running' ? 'run' : t.status === 'pending' ? 'q' : t.status === 'completed' ? 'done' : t.status === 'error' ? 'err' : t.status === 'cancelled' ? 'x' : t.status === 'interrupt' ? '!' : t.status
-    const duration = t.status === 'pending' ? formatDuration(t.queuedAt) : formatDuration(t.startedAt, t.completedAt)
-    return `${t.id}: ${t.description} [${t.agent}] ${status} (${duration})`
-  })
-  return `Background tasks (${tasks.length}):\n${lines.join('\n')}`
+
+  // Group tasks by status
+  const groups = {
+    running: tasks.filter(t => t.status === 'running'),
+    pending: tasks.filter(t => t.status === 'pending'),
+    waiting: tasks.filter(t => t.status === 'waiting'),
+    completed: tasks.filter(t => t.status === 'completed'),
+    error: tasks.filter(t => t.status === 'error' || t.status === 'interrupt'),
+    cancelled: tasks.filter(t => t.status === 'cancelled'),
+  }
+
+  const totalRunning = groups.running.length
+  const totalPending = groups.pending.length
+  const totalWaiting = groups.waiting.length
+  const totalCompleted = groups.completed.length
+  const totalError = groups.error.length
+  const totalCancelled = groups.cancelled.length
+  const totalActive = totalRunning + totalPending + totalWaiting
+
+  // Build header summary
+  const headerParts = []
+  if (totalActive > 0) headerParts.push(`${totalActive} active`)
+  if (totalWaiting > 0) headerParts.push(`${totalWaiting} waiting`)
+  if (totalCompleted > 0) headerParts.push(`${totalCompleted} completed`)
+  if (totalError > 0) headerParts.push(`${totalError} failed`)
+  if (totalCancelled > 0) headerParts.push(`${totalCancelled} cancelled`)
+
+  const lines = []
+  lines.push(`Background tasks for ${sessionID} — ${tasks.length} total${headerParts.length ? ` (${headerParts.join(', ')})` : ''}`)
+  lines.push('')
+
+  // Helper to format a single task with enhanced info
+  const formatTask = (task, isCompact = false) => {
+    const status = task.status === 'running' ? 'run' : task.status === 'pending' ? 'q' : task.status === 'completed' ? 'done' : task.status === 'error' ? 'err' : task.status === 'cancelled' ? 'x' : task.status === 'interrupt' ? '!' : task.status
+    const duration = task.status === 'pending' ? formatDuration(task.queuedAt) : formatDuration(task.startedAt, task.completedAt)
+
+    if (isCompact) {
+      return `${task.id}: ${task.description} [${task.agent}] ${status} (${duration})`
+    }
+
+    let line = `${task.id}: ${task.description} [${task.agent}] ${status} (${duration})`
+
+    // Add progress indicators for running tasks
+    if (task.status === 'running') {
+      const stuck = isTaskStuck(task)
+      const activity = formatActivityTime(task.progress?.lastUpdate)
+      const toolCalls = task.progress?.toolCalls ?? 0
+      const lastTool = task.progress?.lastTool
+
+      const indicators = []
+      if (stuck) indicators.push('⚠️ STUCK')
+      if (toolCalls > 0) indicators.push(`${toolCalls} tools`)
+      if (lastTool) indicators.push(`last: ${lastTool}`)
+      if (activity) indicators.push(activity)
+
+      if (indicators.length) {
+        line += ` — ${indicators.join(' | ')}`
+      }
+    }
+
+    return line
+  }
+
+  // Running tasks
+  if (groups.running.length > 0) {
+    lines.push(`▶ Running (${groups.running.length}):`)
+    for (const task of groups.running) {
+      lines.push(`  ${formatTask(task)}`)
+    }
+    lines.push('')
+  }
+
+  // Pending tasks
+  if (groups.pending.length > 0) {
+    lines.push(`⏳ Pending (${groups.pending.length}):`)
+    for (const task of groups.pending) {
+      lines.push(`  ${formatTask(task)}`)
+    }
+    lines.push('')
+  }
+
+  // Completed tasks
+  if (groups.completed.length > 0) {
+    lines.push(`✓ Completed (${groups.completed.length}):`)
+    for (const task of groups.completed) {
+      lines.push(`  ${formatTask(task)}`)
+    }
+    lines.push('')
+  }
+
+  // Error tasks
+  if (groups.error.length > 0) {
+    lines.push(`✗ Failed (${groups.error.length}):`)
+    for (const task of groups.error) {
+      lines.push(`  ${formatTask(task)}`)
+    }
+    lines.push('')
+  }
+
+  // Cancelled tasks
+  if (groups.cancelled.length > 0) {
+    lines.push(`⊘ Cancelled (${groups.cancelled.length}):`)
+    for (const task of groups.cancelled) {
+      lines.push(`  ${formatTask(task)}`)
+    }
+    lines.push('')
+  }
+
+  // Completion summary when include_completed is true
+  if (options.include_completed && (groups.completed.length > 0 || groups.error.length > 0)) {
+    const finishedTasks = [...groups.completed, ...groups.error]
+    const successCount = groups.completed.length
+    const failureCount = groups.error.length
+
+    let totalDurationMs = 0
+    let durationCount = 0
+    for (const task of finishedTasks) {
+      if (task.startedAt && task.completedAt) {
+        totalDurationMs += task.completedAt.getTime() - task.startedAt.getTime()
+        durationCount++
+      }
+    }
+
+    lines.push('─'.repeat(50))
+    lines.push('Summary:')
+    lines.push(`  Success: ${successCount} | Failed: ${failureCount} | Total: ${finishedTasks.length}`)
+    if (durationCount > 0) {
+      const avgDuration = formatDuration(new Date(0), new Date(Math.round(totalDurationMs / durationCount)))
+      lines.push(`  Average duration: ${avgDuration}`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n').trim()
 }
 
 // ─── Handoff helpers ──────────────────────────────────────────────────────────
@@ -372,6 +668,8 @@ class ConcurrencyManager {
 const POLLING_INTERVAL_MS = 3000
 const TASK_CLEANUP_DELAY_MS = 10 * 60 * 1000
 const TASK_TTL_MS = 30 * 60 * 1000
+const STUCK_POLL_THRESHOLD = 5  // Reduced from 10 for faster stuck detection
+const STUCK_AUTO_CANCEL_MS = 5 * 60 * 1000  // Auto-cancel after 5 minutes stuck
 
 class BackgroundManager {
   tasks = new Map()
@@ -417,20 +715,57 @@ class BackgroundManager {
     try {
       const result = await formatTaskResult(task, this.client)
       const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
-      const artifactPath = await persistence.write(
-        task.id, task.parentSessionID, this.directory, result,
-        {
-          id: task.id,
-          description: task.description,
-          agent: task.agent,
-          status: task.status,
-          parent_session: task.parentSessionID,
-          session: task.sessionID,
-          started_at: task.startedAt?.toISOString(),
-          completed_at: task.completedAt?.toISOString(),
-          duration,
-          error: task.error || '',
+      const isFailed = task.status === 'error' || task.status === 'interrupt' || task.status === 'cancelled'
+
+      // Build enhanced metadata with failure context
+      const metadata = {
+        id: task.id,
+        description: task.description,
+        agent: task.agent,
+        status: task.status,
+        parent_session: task.parentSessionID,
+        session: task.sessionID,
+        started_at: task.startedAt?.toISOString(),
+        completed_at: task.completedAt?.toISOString(),
+        duration,
+        error: task.error || '',
+      }
+
+      // For failed tasks, extract and store failure context
+      if (isFailed && this.client) {
+        try {
+          const failureContext = await extractFailureContext(task, this.client, 10)
+          if (failureContext) {
+            metadata.failure_context = JSON.stringify({
+              message_count: failureContext.messageCount,
+              error: failureContext.error,
+              last_messages: failureContext.contextMessages?.map(m => ({
+                role: m.role,
+                preview: truncateText(m.content, 200),
+              })) || [],
+              extracted_at: failureContext.extractedAt,
+            })
+            metadata.has_failure_context = 'true'
+          }
+        } catch {
+          // Silently ignore failure context extraction errors
         }
+      }
+
+      // Gather failure metadata for failed tasks
+      let failureMetadata = {}
+      if (task.status === 'error' || task.status === 'interrupt') {
+        failureMetadata = {
+          tool_calls: task.progress?.toolCalls || 0,
+          last_tool: task.progress?.lastTool || '',
+          last_activity: task.progress?.lastUpdate?.toISOString() || '',
+          idle_time: task.progress?.lastUpdate ? formatDuration(task.progress.lastUpdate, new Date()) : '',
+          message_count: task.lastMsgCount || 0,
+        }
+      }
+
+      const artifactPath = await persistence.write(
+        task.id, task.parentSessionID, this.directory, result, { ...metadata, ...failureMetadata }
       )
       this.artifactPaths.set(task.id, artifactPath)
     } catch (persistErr) {
@@ -507,8 +842,22 @@ class BackgroundManager {
     } catch {}
   }
 
+  checkDependencies(task) {
+    if (!task.depends_on || task.depends_on.length === 0) return true
+    for (const depId of task.depends_on) {
+      const dep = this.tasks.get(depId)
+      if (!dep) return 'missing' // Dependency never launched - fail immediately
+      if (dep.status === 'error' || dep.status === 'cancelled' || dep.status === 'interrupt') return 'failed'
+      if (dep.status !== 'completed') return false
+    }
+    return true
+  }
+
   async launch(input) {
     if (!input.agent?.trim()) throw new Error('Agent parameter is required')
+    const timeoutSeconds = input.timeout != null
+      ? Math.min(Math.max(input.timeout, 1), 7200)
+      : 1800
     const task = {
       id: `bg_${crypto.randomUUID().slice(0, 8)}`,
       status: 'pending',
@@ -520,7 +869,30 @@ class BackgroundManager {
       parentMessageID: input.parentMessageID,
       parentModel: input.parentModel,
       parentAgent: input.parentAgent,
+      timeout: timeoutSeconds,
+      depends_on: input.depends_on,
     }
+
+    // Check dependencies immediately
+    const depStatus = this.checkDependencies(task)
+    if (depStatus === 'failed' || depStatus === 'missing') {
+      const missingDeps = task.depends_on?.filter(depId => !this.tasks.has(depId))
+      task.status = 'error'
+      if (missingDeps && missingDeps.length > 0) {
+        task.error = `Dependency not found: ${missingDeps.join(', ')} (these tasks were never launched)`
+      } else {
+        task.error = `Dependency failed: one or more required tasks (${task.depends_on?.join(', ')}) failed or were cancelled`
+      }
+      task.completedAt = new Date()
+      this.tasks.set(task.id, task)
+      this.markForNotification(task)
+      void this.notifyParentSession(task)
+      return { ...task }
+    }
+    if (depStatus === false) {
+      task.status = 'waiting'
+    }
+
     this.tasks.set(task.id, task)
     const pending = this.pendingByParent.get(input.parentSessionID) ?? new Set()
     pending.add(task.id)
@@ -529,7 +901,14 @@ class BackgroundManager {
     const queue = this.queuesByKey.get(key) ?? []
     queue.push({ task, input })
     this.queuesByKey.set(key, queue)
-    void this.processKey(key)
+
+    // Only process if not waiting for dependencies
+    if (task.status !== 'waiting') {
+      void this.processKey(key)
+    } else {
+      // Start polling so waiting tasks get checked periodically
+      this.startPolling()
+    }
     return { ...task }
   }
 
@@ -541,6 +920,29 @@ class BackgroundManager {
       while (queue && queue.length > 0) {
         const item = queue.shift()
         if (!item) continue
+        
+        // Skip tasks with unmet dependencies
+        if (item.task.status === 'waiting') {
+          const depStatus = this.checkDependencies(item.task)
+          if (depStatus === false) {
+            // Put back in queue for later
+            queue.unshift(item)
+            break
+          } else if (depStatus === 'failed' || depStatus === 'missing') {
+            const missingDeps = item.task.depends_on?.filter(depId => !this.tasks.has(depId))
+            item.task.status = 'error'
+            if (missingDeps && missingDeps.length > 0) {
+              item.task.error = `Dependency not found: ${missingDeps.join(', ')} (these tasks were never launched)`
+            } else {
+              item.task.error = `Dependency failed: one or more required tasks (${item.task.depends_on?.join(', ')}) failed or were cancelled`
+            }
+            item.task.completedAt = new Date()
+            this.markForNotification(item.task)
+            void this.notifyParentSession(item.task)
+            continue
+          }
+        }
+        
         await this.concurrencyManager.acquire(key)
         if (item.task.status === 'cancelled' || item.task.status === 'error') {
           this.concurrencyManager.release(key); continue
@@ -554,6 +956,8 @@ class BackgroundManager {
           this.concurrencyManager.release(key)
           this.markForNotification(item.task)
           void this.notifyParentSession(item.task)
+          // Check waiting tasks on failure
+          await this.checkWaitingTasks()
         }
       }
     } finally {
@@ -665,7 +1069,53 @@ class BackgroundManager {
 
   async pollRunningTasks() {
     const running = Array.from(this.tasks.values()).filter(t => t.status === 'running')
-    if (running.length === 0) { this.stopPolling(); return }
+    const waiting = Array.from(this.tasks.values()).filter(t => t.status === 'waiting')
+    
+    // Keep polling alive if there are waiting tasks that need dependency checks
+    if (running.length === 0 && waiting.length === 0) { this.stopPolling(); return }
+    
+    const now = Date.now()
+    
+    // Check waiting tasks for dependency resolution or timeout
+    for (const task of waiting) {
+      const depStatus = this.checkDependencies(task)
+      
+      if (depStatus === true) {
+        // Dependencies met! Transition to pending and start processing
+        task.status = 'pending'
+        const key = task.agent.trim()
+        const queue = this.queuesByKey.get(key) ?? []
+        queue.push({ task, input: { agent: task.agent, prompt: task.prompt, description: task.description, parentSessionID: task.parentSessionID, parentMessageID: task.parentMessageID, parentModel: task.parentModel, parentAgent: task.parentAgent } })
+        this.queuesByKey.set(key, queue)
+        void this.processKey(key)
+      } else if (depStatus === 'failed' || depStatus === 'missing') {
+        // Dependency failed or missing
+        const missingDeps = task.depends_on?.filter(depId => !this.tasks.has(depId))
+        task.status = 'error'
+        if (missingDeps && missingDeps.length > 0) {
+          task.error = `Dependency not found: ${missingDeps.join(', ')} (these tasks were never launched)`
+        } else {
+          task.error = `Dependency failed: one or more required tasks (${task.depends_on?.join(', ')}) failed or were cancelled`
+        }
+        task.completedAt = new Date()
+        this.markForNotification(task)
+        void this.notifyParentSession(task)
+      } else if (depStatus === false) {
+        // Dependencies not yet met - check if we've been waiting too long
+        const waitingTime = now - task.queuedAt.getTime()
+        const WAITING_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+        
+        if (waitingTime > WAITING_TIMEOUT_MS) {
+          // Dependencies exist but haven't completed after 5 minutes - fail
+          task.status = 'error'
+          task.error = `Dependency timeout: waited ${formatDuration(task.queuedAt, new Date())} for dependencies (${task.depends_on?.join(', ')}) but they never completed`
+          task.completedAt = new Date()
+          this.markForNotification(task)
+          void this.notifyParentSession(task)
+        }
+      }
+    }
+    
     for (const task of running) {
       if (!task.sessionID) continue
       try {
@@ -676,17 +1126,59 @@ class BackgroundManager {
           task.stablePolls = (task.stablePolls ?? 0) + 1
         } else { task.stablePolls = 0 }
         task.lastMsgCount = count
-        if ((task.stablePolls ?? 0) >= 10 && count > 0) {
+        
+        // Faster completion detection (5 stable polls instead of 10)
+        if ((task.stablePolls ?? 0) >= STUCK_POLL_THRESHOLD && count > 0) {
           const last = messages[messages.length - 1]
           if (last?.info?.role === 'assistant') await this.tryCompleteTask(task, 'poll-stability')
         }
-      } catch {}
+        
+        // Detect stuck tasks - no progress for too long
+        const lastUpdate = task.progress?.lastUpdate ?? task.startedAt
+        if (lastUpdate) {
+          const idleTime = now - lastUpdate.getTime()
+          
+          // Mark as stuck if no activity for 2 minutes
+          if (idleTime > 120_000 && !task.stuckNotified) {
+            task.stuckNotified = true
+            task.error = `Task appears stuck (no activity for ${formatDuration(lastUpdate, new Date())})`
+            // Don't auto-cancel yet, just mark
+          }
+          
+          // Auto-cancel after 5 minutes stuck
+          if (idleTime > STUCK_AUTO_CANCEL_MS && !task.autoCancelled) {
+            task.autoCancelled = true
+            console.error(`[BackgroundManager] Auto-cancelling stuck task ${task.id} after ${formatDuration(lastUpdate, new Date())}`)
+            await this.cancelTask(task.id, { source: 'auto-cancel-stuck', abortSession: true, skipNotification: false })
+            task.error = `Task auto-cancelled after being stuck for ${formatDuration(lastUpdate, new Date())}`
+            continue
+          }
+        }
+      } catch (err) {
+        // Session might be dead
+        console.error(`[BackgroundManager] Error polling task ${task.id}:`, err)
+        if (task.startedAt && now - task.startedAt.getTime() > 60_000) {
+          // If session errors after 1 minute, mark as error
+          task.status = 'error'
+          task.error = `Session error: ${err instanceof Error ? err.message : String(err)}`
+          task.completedAt = new Date()
+          if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
+          void this.persistResult(task).then(() => {
+            this.markForNotification(task)
+            void this.notifyParentSession(task)
+          })
+        }
+      }
     }
-    const now = Date.now()
+    
+    // Timeout check for running and pending tasks
     for (const task of Array.from(this.tasks.values())) {
       if (task.status !== 'running' && task.status !== 'pending') continue
+      // Don't apply timeout to waiting tasks
+      if (task.status === 'pending' && task.depends_on) continue
       const ref = task.status === 'pending' ? task.queuedAt : task.startedAt
-      if (ref && now - ref.getTime() > TASK_TTL_MS) {
+      const timeoutMs = (task.timeout ?? 1800) * 1000
+      if (ref && now - ref.getTime() > timeoutMs) {
         task.status = 'error'; task.error = 'Task timed out'; task.completedAt = new Date()
         if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
         void this.persistResult(task).then(() => {
@@ -711,14 +1203,46 @@ class BackgroundManager {
       this.markForNotification(task)
       try { await this.client.session.abort({ path: { id: task.sessionID } }) } catch {}
       await this.notifyParentSession(task)
+      
+      // Check if any waiting tasks now have their dependencies met
+      await this.checkWaitingTasks()
     } catch (err) {
       task.status = 'error'
       task.error = err instanceof Error ? err.message : String(err)
       task.completedAt = new Date()
       this.markForNotification(task)
       await this.notifyParentSession(task)
+      
+      // Check waiting tasks even on error (they might need to fail too)
+      await this.checkWaitingTasks()
     } finally {
       task.completing = false
+    }
+  }
+
+  async checkWaitingTasks() {
+    for (const task of this.tasks.values()) {
+      if (task.status !== 'waiting') continue
+      const depStatus = this.checkDependencies(task)
+      if (depStatus === true) {
+        task.status = 'pending'
+        const key = task.agent.trim()
+        const queue = this.queuesByKey.get(key) ?? []
+        queue.push({ task, input: { agent: task.agent, prompt: task.prompt, description: task.description, parentSessionID: task.parentSessionID, parentMessageID: task.parentMessageID, parentModel: task.parentModel, parentAgent: task.parentAgent } })
+        this.queuesByKey.set(key, queue)
+        void this.processKey(key)
+      } else if (depStatus === 'failed' || depStatus === 'missing') {
+        const missingDeps = task.depends_on?.filter(depId => !this.tasks.has(depId))
+        task.status = 'error'
+        if (missingDeps && missingDeps.length > 0) {
+          task.error = `Dependency not found: ${missingDeps.join(', ')} (these tasks were never launched)`
+        } else {
+          task.error = `Dependency failed: one or more required tasks (${task.depends_on?.join(', ')}) failed or were cancelled`
+        }
+        task.completedAt = new Date()
+        this.markForNotification(task)
+        void this.notifyParentSession(task)
+      }
     }
   }
 
@@ -892,6 +1416,8 @@ export const GroundworkPlugin = async ({ client, directory }) => {
           description: z.string().describe('Short description (3-5 words)'),
           prompt: z.string().describe('Self-contained prompt with all context'),
           agent: z.string().describe('Agent type (general, explore, coder)'),
+          timeout: z.number().optional().describe('Timeout in seconds (default: 1800 = 30 min, max: 7200 = 2 hours)'),
+          depends_on: z.array(z.string()).optional().describe('Array of task IDs that must complete before this task starts'),
         },
         async execute(args, toolContext) {
           if (!args.agent?.trim()) return '[ERROR] Agent parameter is required.'
@@ -907,7 +1433,12 @@ export const GroundworkPlugin = async ({ client, directory }) => {
               description: args.description, prompt: args.prompt, agent: args.agent.trim(),
               parentSessionID: toolContext.sessionID, parentMessageID: toolContext.messageID,
               parentModel, parentAgent,
+              timeout: args.timeout,
+              depends_on: args.depends_on,
             })
+            if (task.status === 'waiting') {
+              return `Background task launched with dependencies.\n\nTask ID: ${task.id}\nDescription: ${task.description}\nAgent: ${task.agent}\nStatus: ${task.status} (waiting for: ${task.depends_on?.join(', ')})\n\nDo NOT call background_output now. Wait for <system-reminder> notification first.`
+            }
             return `Background task launched.\n\nTask ID: ${task.id}\nDescription: ${task.description}\nAgent: ${task.agent}\nStatus: ${task.status}\n\nDo NOT call background_output now. Wait for <system-reminder> notification first.`
           } catch (error) {
             return `[ERROR] Failed to launch: ${error instanceof Error ? error.message : String(error)}`
@@ -973,7 +1504,7 @@ export const GroundworkPlugin = async ({ client, directory }) => {
             const tasks = args.include_completed
               ? allTasks
               : allTasks.filter(t => t.status === 'running' || t.status === 'pending')
-            return formatTaskList(tasks, toolContext.sessionID)
+            return formatTaskList(tasks, toolContext.sessionID, { include_completed: args.include_completed })
           } catch (error) {
             return `Error listing tasks: ${error instanceof Error ? error.message : String(error)}`
           }
@@ -1012,10 +1543,10 @@ export const GroundworkPlugin = async ({ client, directory }) => {
       }),
 
       background_input: tool({
-        description: 'Send input or interrupt signal to a running background task. Useful when a task is stuck waiting for input or needs to be interrupted.',
+        description: 'Send interrupt signal or input to a running background task. Primary use: interrupt stuck tasks with Ctrl+C (\\x03). Interactive input is limited - tasks must be designed to accept it.',
         args: {
           task_id: z.string().describe('Task ID to send input to'),
-          data: z.string().describe('Text input to send (e.g., "yes\\n", "\\x03" for Ctrl+C, "\\x04" for Ctrl+D)'),
+          data: z.string().describe('Input to send. Common: "\\x03" = Ctrl+C (interrupt), "\\x04" = Ctrl+D (EOF). For interactive input, use plain text.'),
         },
         async execute(args) {
           try {
@@ -1024,18 +1555,216 @@ export const GroundworkPlugin = async ({ client, directory }) => {
             if (task.status !== 'running') return `[ERROR] Cannot send input to task with status "${task.status}". Task must be running.`
             if (!task.sessionID) return `[ERROR] Task has no session ID.`
             
-            // Send the input as a prompt to the background session
+            // Handle special control characters
+            let inputData = args.data
+            const controlChars = {
+              '\\x03': '\x03',  // Ctrl+C
+              '\\x04': '\x04',  // Ctrl+D
+              '\\n': '\n',      // Newline
+              '\\r': '\r',      // Carriage return
+              '\\t': '\t',      // Tab
+            }
+            for (const [escape, char] of Object.entries(controlChars)) {
+              inputData = inputData.replaceAll(escape, char)
+            }
+            
+            // For Ctrl+C, abort the session directly for reliability
+            if (inputData === '\x03') {
+              try {
+                await client.session.abort({ path: { id: task.sessionID } })
+                task.status = 'interrupt'
+                task.error = 'Task interrupted by user (Ctrl+C)'
+                task.completedAt = new Date()
+                if (task.concurrencyKey) { manager.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
+                await manager.persistResult(task)
+                manager.markForNotification(task)
+                void manager.notifyParentSession(task)
+                return `Task ${args.task_id} interrupted (Ctrl+C sent)`
+              } catch (abortErr) {
+                return `[ERROR] Failed to abort task: ${abortErr instanceof Error ? abortErr.message : String(abortErr)}`
+              }
+            }
+            
+            // For other input, send as prompt to the background session
             await client.session.prompt({
               path: { id: task.sessionID },
               body: {
                 noReply: true,
-                parts: [{ type: 'text', text: args.data, synthetic: true }],
+                parts: [{ type: 'text', text: inputData, synthetic: true }],
               },
             })
             
-            return `Input sent to task ${args.task_id}: "${args.data}"`
+            // Reset stuck detection since we got new input
+            task.stuckNotified = false
+            task.stablePolls = 0
+            if (task.progress) task.progress.lastUpdate = new Date()
+            
+            return `Input sent to task ${args.task_id}: "${truncateText(inputData, 50)}"`
           } catch (error) {
             return `[ERROR] Failed to send input: ${error instanceof Error ? error.message : String(error)}`
+          }
+        },
+      }),
+
+      background_status: tool({
+        description: 'Get detailed health information about a running or completed background task.',
+        args: {
+          task_id: z.string().describe('Task ID to get status for'),
+        },
+        async execute(args) {
+          try {
+            let task = manager.getTask(args.task_id)
+            if (!task) {
+              await manager.recoverStateForTask(args.task_id)
+              task = manager.getTask(args.task_id)
+            }
+            if (!task) return `Task not found: ${args.task_id}`
+
+            const lines = []
+            lines.push(`Task ID: ${task.id}`)
+            lines.push(`Description: ${task.description || '(no description)'}`)
+            lines.push(`Agent: ${task.agent || 'unknown'}`)
+            lines.push(`Status: ${formatTaskStatus(task).split(' — ')[1] || task.status}`)
+            
+            // Duration
+            const duration = task.status === 'pending'
+              ? formatDuration(task.queuedAt, undefined)
+              : formatDuration(task.startedAt, task.completedAt)
+            lines.push(`Duration: ${duration}`)
+
+            // Progress metrics
+            if (task.progress) {
+              lines.push(`Tool Calls: ${task.progress.toolCalls || 0}`)
+              lines.push(`Last Update: ${task.progress.lastUpdate ? task.progress.lastUpdate.toISOString() : 'N/A'}`)
+              lines.push(`Last Tool: ${task.progress.lastTool || 'N/A'}`)
+            } else {
+              lines.push(`Tool Calls: 0`)
+              lines.push(`Last Update: N/A`)
+              lines.push(`Last Tool: N/A`)
+            }
+
+            // Stuck detection
+            const now = new Date()
+            const lastUpdate = task.progress?.lastUpdate || task.startedAt || task.queuedAt
+            const timeSinceUpdate = lastUpdate ? now.getTime() - lastUpdate.getTime() : 0
+            const isStuck = task.status === 'running' && timeSinceUpdate > 30000
+            lines.push(`Stuck: ${isStuck ? 'YES (no progress for >30s)' : 'No'}`)
+
+            lines.push(`Session ID: ${task.sessionID || 'N/A'}`)
+            lines.push(`Error: ${task.error || 'None'}`)
+            lines.push(`Result Read: ${manager.isRead(task.id) ? 'Yes' : 'No'}`)
+
+            // Artifact path
+            const artifactPath = manager.artifactPaths.get(task.id)
+            lines.push(`Artifact: ${artifactPath || 'N/A'}`)
+
+            // Running-specific info
+            if (task.status === 'running') {
+              const timeSinceActivity = lastUpdate ? formatDuration(lastUpdate, now) : 'N/A'
+              lines.push(`Time Since Last Activity: ${timeSinceActivity}`)
+              
+              // Estimated completion based on stable polls
+              if (task.stablePolls !== undefined) {
+                const estimatedStatus = task.stablePolls >= 10 ? 'Likely complete (stable for 10+ polls)' : `Active (${task.stablePolls || 0} stable polls)`
+                lines.push(`Estimated Completion: ${estimatedStatus}`)
+              } else {
+                lines.push(`Estimated Completion: Active`)
+              }
+            }
+
+            // Completed-specific info
+            if (task.status === 'completed' || task.status === 'error' || task.status === 'cancelled' || task.status === 'interrupt') {
+              if (task.completedAt) {
+                lines.push(`Completion Time: ${task.completedAt.toISOString()}`)
+              }
+              
+              // Result summary from persistence
+              try {
+                const persisted = await persistence.read(task.id, task.parentSessionID, manager.directory)
+                if (persisted) {
+                  const contentMatch = persisted.match(/^---\n[\s\S]*?\n---\n\n([\s\S]*)$/)
+                  const content = contentMatch ? contentMatch[1] : persisted
+                  lines.push(`Result Summary: ${truncateText(content.replace(/\n/g, ' ').trim(), 200)}`)
+                } else {
+                  lines.push(`Result Summary: (not persisted yet)`)
+                }
+              } catch {
+                lines.push(`Result Summary: (unable to read)`)
+              }
+            }
+
+            return lines.join('\n')
+          } catch (error) {
+            return `Error getting status: ${error instanceof Error ? error.message : String(error)}`
+          }
+        },
+      }),
+
+      background_stream: tool({
+        description: 'Get partial output from a running background task. Useful for monitoring long-running tasks without waiting for completion.',
+        args: {
+          task_id: z.string().describe('Task ID to stream output from'),
+          offset: z.number().optional().describe('Character offset to start from (default: 0 for beginning)'),
+        },
+        async execute(args) {
+          try {
+            let task = manager.getTask(args.task_id)
+            if (!task) {
+              await manager.recoverStateForTask(args.task_id)
+              task = manager.getTask(args.task_id)
+            }
+            if (!task) return `Task not found: ${args.task_id}`
+            if (!task.sessionID) return `Task has no session ID`
+
+            // Fetch messages from the task's session
+            const resp = await client.session.messages({ path: { id: task.sessionID } })
+            const messages = extractMessages(resp)
+            
+            if (!messages.length) {
+              return `Task ${args.task_id} has no messages yet.\nStatus: ${task.status}\nOffset: ${args.offset || 0}`
+            }
+
+            // Extract text content from assistant messages
+            const extracted = []
+            for (const msg of messages) {
+              if (msg.info?.role !== 'assistant') continue
+              for (const part of msg.parts || []) {
+                if (part.type === 'text' && part.text) {
+                  extracted.push(part.text)
+                } else if (part.type === 'reasoning' && part.text) {
+                  extracted.push(part.text)
+                } else if (part.type === 'thinking' && part.text) {
+                  extracted.push(part.text)
+                } else if (part.type === 'tool' && part.state) {
+                  if (part.state.status === 'completed' && part.state.title) {
+                    extracted.push(`[Tool: ${part.tool}] ${part.state.title}`)
+                  } else if (part.state.status === 'error') {
+                    extracted.push(`[Tool: ${part.tool}] ERROR: ${part.state.title || 'unknown error'}`)
+                  }
+                }
+              }
+            }
+
+            const fullContent = extracted.join('\n\n')
+            const offset = args.offset || 0
+            
+            if (offset >= fullContent.length) {
+              return `Task ${args.task_id}\nStatus: ${task.status}\nTotal length: ${fullContent.length}\nNo new content since offset ${offset}\nIs running: ${task.status === 'running'}`
+            }
+
+            const newContent = fullContent.slice(offset)
+            const newLength = newContent.length
+            const totalLength = fullContent.length
+            const isRunning = task.status === 'running' || task.status === 'pending' || task.status === 'waiting'
+
+            // Update task's last output length for tracking
+            if (task.status === 'running') {
+              task.lastOutputLength = totalLength
+            }
+
+            return `Task ${args.task_id} — ${task.status}\nTotal: ${totalLength} chars | New: ${newLength} chars | Offset: ${offset}\nRunning: ${isRunning}\n\n---\n\n${truncateText(newContent, 4000)}\n\n---\n\nNext offset: ${totalLength}`
+          } catch (error) {
+            return `Error streaming output: ${error instanceof Error ? error.message : String(error)}`
           }
         },
       }),

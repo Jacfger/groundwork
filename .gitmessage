@@ -1,0 +1,11 @@
+# type: subject
+#
+# Types:
+#   feat     - New feature
+#   fix      - Bug fix
+#   refactor - Code refactoring
+#   docs     - Documentation
+#   chore    - Maintenance
+#   test     - Tests
+#
+# Subject: 50-72 chars, imperative mood
