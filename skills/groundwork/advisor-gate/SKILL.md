@@ -189,8 +189,13 @@ The advisor MUST anchor claims to specific artifacts:
 
 ## Implementation Notes
 
-- Invoke the advisor using `task` with **`subagent_type: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities.
+- Invoke the advisor using `task` with **`subagent_type: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities. You MUST use exactly `subagent_type: "advisor"` — never "orchestrator", "general-purpose", "coder", or any other type. This is the ONLY place where `task` is used instead of `background_task`.
   - **The advisor agent reads files directly** — point it to files to inspect. It will read and ground its advice in actual code.
+- **After invoking the advisor, use `background_wait` to block until the advisor responds.** This replaces the old pattern of launching and waiting for a notification. Example:
+  ```
+  task(subagent_type="advisor", ...)  → Triggers advisor
+  background_wait(task_id="...")      → Blocks until advisor responds
+  ```
 - **Advisor is READ-ONLY. The advisor MUST NOT call `background_task`, `background_output`, `background_list`, or any other background task tools.** The advisor provides strategic guidance only; it does not execute work or delegate to other agents.
 - **Output is persisted automatically** — the task result is returned directly.
 - Track escalation count; avoid uncontrolled loops (max 3 escalations per task before surfacing to user).

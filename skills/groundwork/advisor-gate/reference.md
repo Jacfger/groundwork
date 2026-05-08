@@ -80,6 +80,30 @@ Effort estimate: Quick | Short | Medium | Large
 Executor follow-up: <next action taken>
 ```
 
+## Proper Invocation Pattern
+
+The advisor must be invoked using `task` with `subagent_type: "advisor"`, then wait for the response using `background_wait`:
+
+```
+# 1. Trigger the advisor
+[Tool: task]
+subagent_type: "advisor"
+prompt: |
+  ## Completion Gate Request
+  Task: <what was asked>
+  What was done: <summary>
+  ...
+
+# 2. Wait for response (blocks until advisor completes)
+[Tool: background_wait]
+task_id: <task-id-from-step-1>
+timeout: 300
+
+# 3. Use the result directly
+```
+
+**Do NOT use `background_output` to retrieve advisor results.** The `task` tool returns the result directly when used with `background_wait`.
+
 ## Example: Decision — Architecture with Insight
 
 1. Executor uncertain between two caching strategies.
