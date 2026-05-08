@@ -79,9 +79,17 @@ When a background task fails, the result from `background_output` will include a
 **NEVER do this:**
 ```
 ❌ while (task.running) { background_list(); background_status(); background_output(); }
+❌ Calling background_output on a completed task hoping for different results
+❌ Calling any background tool more than once for the same task in a row
 ```
 
-**This is spam. It wastes tokens, burns context, and achieves nothing.**
+**This is spam. It wastes tokens, burns context, and achieves nothing. The result will NOT change.**
+
+**Hard rules:**
+- **Call `background_output` EXACTLY ONCE per task** — after the `<system-reminder>` notification, or after `background_wait` returns
+- **Never call `background_output` on a task you already got output from** — if the result is incomplete, that's what the task produced
+- **Never call `background_list` more than once per minute** — status does not change that fast
+- **Never call `background_status` in a loop** — one check is enough
 
 **Instead:**
 - **Waiting on one task?** Use `background_wait(task_id)` — it blocks efficiently with a 2s polling interval internally.
