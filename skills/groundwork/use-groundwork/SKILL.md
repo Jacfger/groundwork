@@ -133,6 +133,7 @@ Background tasks run in their own session context. The `parent_session` field in
 - **NEVER call `task` or `delegate` — always use `background_task` instead**
 - **NEVER declare done without `advisor-gate` APPROVE — no exceptions**
 - **NEVER use `background_task` when acting as advisor.** Background tasks are for executors only.
+- **NEVER use `task` or `background_task` inside a background task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Background task prompts must be fully self-contained.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not end the conversation — use `question` tool to keep going

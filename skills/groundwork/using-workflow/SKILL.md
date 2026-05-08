@@ -56,6 +56,7 @@ Invoke the relevant skill tool BEFORE any response or action. 1% chance = invoke
 ## What NOT to Do
 
 - **NEVER call `task` or `delegate` — always use `background_task` instead**
+- **NEVER use `task` or `background_task` inside a background task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Background task prompts must be fully self-contained.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not declare "done" without advisor completion gate
