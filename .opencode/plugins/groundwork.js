@@ -1488,7 +1488,7 @@ export const GroundworkPlugin = async ({ client, directory }) => {
       }),
 
       background_output: tool({
-        description: 'Get background task output. Call after notification.'
+        description: 'Get background task output. Call after notification.',
         args: {
           task_id: z.string().describe('Task ID to get output from'),
           block: z.boolean().optional().describe('Wait for completion (default: false)'),
