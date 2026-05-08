@@ -726,8 +726,10 @@ class BackgroundManager {
         parent_session: task.parentSessionID,
         session: task.sessionID,
         started_at: task.startedAt?.toISOString(),
+        queued_at: task.queuedAt?.toISOString(),
         completed_at: task.completedAt?.toISOString(),
         duration,
+        timeout: task.timeout,
         error: task.error || '',
       }
 
@@ -804,6 +806,7 @@ class BackgroundManager {
   async recoverState(sessionID) {
     const diskTasks = await persistence.listForSession(sessionID, this.directory)
     const recovered = []
+    let hasRunning = false
     for (const diskTask of diskTasks) {
       if (this.tasks.has(diskTask.id)) continue
       const task = {
@@ -815,13 +818,35 @@ class BackgroundManager {
         sessionID: diskTask.session || '',
         completedAt: diskTask.completed_at ? new Date(diskTask.completed_at) : new Date(),
         startedAt: diskTask.started_at ? new Date(diskTask.started_at) : undefined,
+        queuedAt: diskTask.queued_at ? new Date(diskTask.queued_at) : undefined,
+        timeout: diskTask.timeout ? parseInt(diskTask.timeout, 10) : undefined,
         error: diskTask.error || '',
+        // Restore progress so stuck-task detection works
+        progress: diskTask.started_at ? {
+          toolCalls: 0,
+          lastUpdate: new Date(diskTask.started_at),
+        } : undefined,
       }
       this.tasks.set(task.id, task)
       const artifactPath = persistence.artifactPath(task.id, sessionID, this.directory)
       this.artifactPaths.set(task.id, artifactPath)
       recovered.push(task)
+      if (task.status === 'running' || task.status === 'waiting') hasRunning = true
+      
+      // If recovered task exceeded timeout, mark as error immediately
+      if (task.status === 'running' || task.status === 'pending') {
+        const ref = task.status === 'pending' ? task.queuedAt : task.startedAt
+        const timeoutMs = (task.timeout ?? 1800) * 1000
+        if (ref && Date.now() - ref.getTime() > timeoutMs) {
+          task.status = 'error'
+          task.error = task.error || 'Task timed out (exceeded timeout while plugin was reloaded)'
+          task.completedAt = new Date()
+          console.error(`[BackgroundManager] Recovered task ${task.id} exceeded timeout, marking as error`)
+        }
+      }
     }
+    // Start polling if we recovered any active tasks
+    if (hasRunning) this.startPolling()
     return recovered
   }
 
@@ -1127,6 +1152,21 @@ class BackgroundManager {
         } else { task.stablePolls = 0 }
         task.lastMsgCount = count
         
+        // Check for repeated tool errors in recent messages
+        const recentMessages = messages.slice(-10)
+        let toolErrorCount = 0
+        for (const msg of recentMessages) {
+          for (const part of msg.parts || []) {
+            if (part.type === 'tool' && part.state?.status === 'error') toolErrorCount++
+          }
+        }
+        if (toolErrorCount >= 3 && !task.toolErrorNotified) {
+          task.toolErrorNotified = true
+          console.error(`[BackgroundManager] Task ${task.id} has ${toolErrorCount} recent tool errors, may be stuck`)
+          // Don't auto-cancel yet, but mark as potentially stuck
+          if (!task.error) task.error = `Multiple tool errors detected (${toolErrorCount} in last 10 messages)`
+        }
+        
         // Faster completion detection (5 stable polls instead of 10)
         if ((task.stablePolls ?? 0) >= STUCK_POLL_THRESHOLD && count > 0) {
           const last = messages[messages.length - 1]
@@ -1185,6 +1225,18 @@ class BackgroundManager {
           this.markForNotification(task)
           void this.notifyParentSession(task)
         })
+      }
+    }
+    
+    // Maximum lifetime check: hard limit of 2 hours even if making progress
+    // This prevents runaway tasks that keep making small progress
+    for (const task of Array.from(this.tasks.values())) {
+      if (task.status !== 'running') continue
+      const maxLifetime = 2 * 60 * 60 * 1000 // 2 hours
+      if (task.startedAt && now - task.startedAt.getTime() > maxLifetime) {
+        console.error(`[BackgroundManager] Task ${task.id} exceeded maximum lifetime (2h), forcing completion`)
+        await this.cancelTask(task.id, { source: 'max-lifetime', abortSession: true, skipNotification: false })
+        task.error = `Task exceeded maximum lifetime of 2 hours`
       }
     }
   }
