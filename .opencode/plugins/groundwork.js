@@ -17,6 +17,113 @@ const z = tool.schema
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// ─── Filesystem snapshot helpers ──────────────────────────────────────────────
+
+async function captureFileSnapshot(directory, maxDepth = 3) {
+  const snapshot = { files: [], directories: [], timestamp: new Date().toISOString() }
+  
+  async function walk(dir, depth) {
+    if (depth > maxDepth) return
+    try {
+      const entries = await fsPromises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        const relativePath = path.relative(directory, fullPath)
+        
+        // Skip node_modules, .git, and hidden directories
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+        
+        if (entry.isDirectory()) {
+          snapshot.directories.push(relativePath)
+          await walk(fullPath, depth + 1)
+        } else if (entry.isFile()) {
+          try {
+            const stats = await fsPromises.stat(fullPath)
+            snapshot.files.push({
+              path: relativePath,
+              size: stats.size,
+              mtime: stats.mtime.toISOString(),
+            })
+          } catch {
+            // Skip files we can't stat
+          }
+        }
+      }
+    } catch {
+      // Skip directories we can't read
+    }
+  }
+  
+  await walk(directory, 0)
+  return snapshot
+}
+
+function diffFileSnapshots(before, after) {
+  const changes = {
+    created: [],
+    modified: [],
+    deleted: [],
+    unchanged: [],
+  }
+  
+  const beforeMap = new Map(before.files.map(f => [f.path, f]))
+  const afterMap = new Map(after.files.map(f => [f.path, f]))
+  
+  // Find created and modified files
+  for (const [path, afterFile] of afterMap) {
+    const beforeFile = beforeMap.get(path)
+    if (!beforeFile) {
+      changes.created.push(afterFile)
+    } else if (beforeFile.mtime !== afterFile.mtime || beforeFile.size !== afterFile.size) {
+      changes.modified.push({ path, beforeSize: beforeFile.size, afterSize: afterFile.size })
+    } else {
+      changes.unchanged.push(afterFile)
+    }
+  }
+  
+  // Find deleted files
+  for (const [path, beforeFile] of beforeMap) {
+    if (!afterMap.has(path)) {
+      changes.deleted.push(beforeFile)
+    }
+  }
+  
+  return changes
+}
+
+function formatFileChanges(changes) {
+  const lines = []
+  
+  if (changes.created.length > 0) {
+    lines.push(`\n📁 Files created (${changes.created.length}):`)
+    for (const file of changes.created) {
+      lines.push(`  + ${file.path} (${file.size} bytes)`)
+    }
+  }
+  
+  if (changes.modified.length > 0) {
+    lines.push(`\n✏️  Files modified (${changes.modified.length}):`)
+    for (const file of changes.modified) {
+      const sizeDiff = file.afterSize - file.beforeSize
+      const diffStr = sizeDiff > 0 ? `+${sizeDiff}` : `${sizeDiff}`
+      lines.push(`  ~ ${file.path} (${diffStr} bytes)`)
+    }
+  }
+  
+  if (changes.deleted.length > 0) {
+    lines.push(`\n🗑️  Files deleted (${changes.deleted.length}):`)
+    for (const file of changes.deleted) {
+      lines.push(`  - ${file.path}`)
+    }
+  }
+  
+  if (lines.length === 0) {
+    lines.push('\n✓ No file changes detected')
+  }
+  
+  return lines.join('\n')
+}
+
 // ─── Skills injection helpers ─────────────────────────────────────────────────
 
 const groundworkSkillsDir = path.resolve(__dirname, '../../skills/groundwork')
@@ -225,6 +332,7 @@ async function formatTaskResult(task, client) {
   const maxAttempts = 4
   const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
   const header = `Task Result\n\nTask ID: ${task.id}\nDescription: ${task.description}\nDuration: ${duration}\nSession ID: ${task.sessionID}\n\n---\n\n`
+  const fileChangesSection = task.fileChanges ? `\n\n---\n\n📁 File Changes\n${formatFileChanges(task.fileChanges)}` : ''
   let prevMsgCount = -1
   let bestContent = ''
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -273,17 +381,17 @@ async function formatTaskResult(task, client) {
         : content
       
       if (fullContent.length > bestContent.length) bestContent = fullContent
-      if (msgCount === prevMsgCount && bestContent) return header + bestContent
+      if (msgCount === prevMsgCount && bestContent) return header + bestContent + fileChangesSection
       prevMsgCount = msgCount
-      if (attempt >= maxAttempts - 1) return header + (bestContent || '(No text output)')
+      if (attempt >= maxAttempts - 1) return header + (bestContent || '(No text output)') + fileChangesSection
     } catch (err) {
       if (attempt >= maxAttempts - 1) {
-        if (bestContent) return header + bestContent
+        if (bestContent) return header + bestContent + fileChangesSection
         return `${header}Error extracting task result: ${err instanceof Error ? err.message : String(err)}`
       }
     }
   }
-  return header + (bestContent || '(No text output)')
+  return header + (bestContent || '(No text output)') + fileChangesSection
 }
 
 function buildNotificationText({ task, duration, statusText, allComplete, remainingCount, completedTasks, artifactPath }) {
@@ -1016,6 +1124,11 @@ class BackgroundManager {
     task.progress = { toolCalls: 0, lastUpdate: new Date() }
     task.concurrencyKey = key
     task.concurrencyGroup = key
+    try {
+      task.beforeSnapshot = await captureFileSnapshot(parentDirectory)
+    } catch (err) {
+      console.error(`[BackgroundManager] Failed to capture before snapshot for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`)
+    }
     this.startPolling()
     const launchModel = input.parentModel
       ? { providerID: input.parentModel.providerID, modelID: input.parentModel.modelID }
@@ -1252,6 +1365,16 @@ class BackgroundManager {
       await this.persistResult(task)
       task.status = 'completed'
       task.completedAt = new Date()
+      try {
+        const parentSession = await this.client.session.get({ path: { id: task.parentSessionID }, query: { directory: this.directory } }).catch(() => null)
+        const parentDirectory = parentSession?.data?.directory ?? this.directory
+        const afterSnapshot = await captureFileSnapshot(parentDirectory)
+        if (task.beforeSnapshot) {
+          task.fileChanges = diffFileSnapshots(task.beforeSnapshot, afterSnapshot)
+        }
+      } catch (err) {
+        console.error(`[BackgroundManager] Failed to capture after snapshot for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
       this.markForNotification(task)
       try { await this.client.session.abort({ path: { id: task.sessionID } }) } catch {}
       await this.notifyParentSession(task)
