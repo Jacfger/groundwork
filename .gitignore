@@ -1,4 +1,8 @@
 node_modules/
+dist/
 *.log
 .DS_Store
 .opencode/background-tasks/
+.opencode/plugins/*.js
+test-*.ts
+test-*.mjs

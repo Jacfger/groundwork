@@ -2,5 +2,9 @@
   "name": "opencode-groundwork",
   "version": "1.0.0",
   "type": "module",
-  "main": ".opencode/plugins/groundwork.js"
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsdown && mv -f .opencode/plugins/index.js .opencode/plugins/groundwork.js 2>/dev/null; true",
+    "typecheck": "tsc --noEmit"
+  }
 }

@@ -137,6 +137,33 @@ Background tasks run in their own session context. The `parent_session` field in
 | `commit` | Creating git commits (ensures consistent style) |
 | `opencode-acp` | Controlling another OpenCode instance via ACP protocol |
 
+## Task Scoping for Background Tasks
+
+**Rules for decomposing work into background tasks:**
+
+1. **Max 3 files per task.** If a task needs to create/modify >3 files, split it into multiple tasks.
+2. **Max ~200 LOC per task.** If a single file needs >200 lines, consider if it can be split or if the coder prompt should include the full content inline (not via file reads).
+3. **One responsibility per task.** "Create types.ts" is good. "Create all lib files" is bad — it creates a mega-task that will run for 20+ minutes and likely fail.
+4. **Embed source in prompts.** Background tasks cannot reliably read large source files. If a coder needs reference material, embed it directly in the prompt text. Do NOT tell the coder to "read file X" — it may fail.
+5. **Verify task output immediately.** After a task completes, check the result. If it says `(No text output)` or the wrong files were created, steer the task before giving up on it.
+
+### Steering Ladder (Failed Task Recovery)
+
+When a background task fails or produces wrong output, follow this escalation path:
+
+```
+1. STEER the existing task with background_input(type='steer')
+   → Corrects the task without losing context
+   
+2. If steering fails (task already cleaned up), RE-LAUNCH with corrected prompt
+   → New task with lessons learned embedded
+   
+3. Only after BOTH steer and re-launch fail, do the work yourself
+   → Explain to user WHY you're doing it directly
+```
+
+**NEVER skip to step 3.** Steps 1 and 2 are mandatory. Doing work directly is the last resort, not the first instinct.
+
 ## What NOT to Do
 
 - **NEVER call `task` or `delegate` — always use `background_task` instead**
@@ -144,6 +171,7 @@ Background tasks run in their own session context. The `parent_session` field in
 - **NEVER use `background_task` when acting as advisor.** Background tasks are for executors only.
 - **NEVER use `task` or `background_task` inside a background task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Background task prompts must be fully self-contained.
 - **NEVER use `question` tool in subagents.** Subagents must not ask questions — they should make decisions and do the work. The executor handles all user-facing questions.
+- **NEVER do implementation work directly when a coder fails.** Always steer first (`background_input(type='steer')`). Only do the work yourself after the SAME task has been steered AND re-launched and still fails — and even then, explain why to the user.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not end the conversation — use `question` tool to keep going
