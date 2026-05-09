@@ -6,3 +6,4 @@ dist/
 .opencode/plugins/*.js
 test-*.ts
 test-*.mjs
+docs/prds/
