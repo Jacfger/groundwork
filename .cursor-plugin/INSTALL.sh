@@ -25,7 +25,7 @@ mkdir -p "$INSTALL_DIR"
 
 # Copy plugin files
 cd "$TEMP_DIR/repo"
-cp -R .cursor-plugin commands hooks skills agents package.json README.md "$INSTALL_DIR/"
+cp -R .cursor-plugin commands hooks skills agents README.md "$INSTALL_DIR/"
 
 echo "✓ Installed to $INSTALL_DIR"
 echo ""

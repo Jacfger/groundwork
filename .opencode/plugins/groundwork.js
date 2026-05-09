@@ -1133,10 +1133,12 @@ class BackgroundManager {
     const launchModel = input.parentModel
       ? { providerID: input.parentModel.providerID, modelID: input.parentModel.modelID }
       : undefined
+    const backgroundPreamble = `[BACKGROUND TASK RULES — MANDATORY]\nYou are a background task with NO user interaction. You MUST:\n- Never call the \`question\` tool or any tool that waits for user input — you will hang forever if you do.\n- Never call \`task\`, \`delegate\`, or any background_task tools — they are blocked in child sessions.\n- Make all decisions autonomously. If uncertain, pick the most reasonable option and explain your choice.\n- Return your final result in your last message — that is the only output the orchestrator will see.\n[END BACKGROUND TASK RULES]\n\n`
+
     const promptBody = {
       agent: input.agent.trim(),
       ...(launchModel ? { model: launchModel } : {}),
-      parts: [{ type: 'text', text: input.prompt, synthetic: true }],
+      parts: [{ type: 'text', text: backgroundPreamble + input.prompt, synthetic: true }],
     }
     this.client.session.promptAsync?.({
       path: { id: sessionID },
@@ -1376,7 +1378,8 @@ class BackgroundManager {
         console.error(`[BackgroundManager] Failed to capture after snapshot for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`)
       }
       this.markForNotification(task)
-      try { await this.client.session.abort({ path: { id: task.sessionID } }) } catch {}
+      // Keep session alive for potential reactivation — abort after idle timeout
+      this.scheduleSessionCleanup(task)
       await this.notifyParentSession(task)
       
       // Check if any waiting tasks now have their dependencies met
@@ -1392,6 +1395,29 @@ class BackgroundManager {
       await this.checkWaitingTasks()
     } finally {
       task.completing = false
+    }
+  }
+
+  /** Schedule session abort after idle timeout — allows reactivation window */
+  scheduleSessionCleanup(task) {
+    const CLEANUP_DELAY_MS = 5 * 60 * 1000 // 5 minutes idle window for reactivation
+    if (task._cleanupTimer) clearTimeout(task._cleanupTimer)
+    task._cleanupTimer = setTimeout(async () => {
+      if (task.status === 'completed' && task.sessionID) {
+        try {
+          await this.client.session.abort({ path: { id: task.sessionID } })
+          task.sessionID = undefined // Mark as cleaned up
+        } catch {}
+      }
+      task._cleanupTimer = undefined
+    }, CLEANUP_DELAY_MS)
+  }
+
+  /** Cancel scheduled cleanup when task is reactivated */
+  cancelSessionCleanup(task) {
+    if (task._cleanupTimer) {
+      clearTimeout(task._cleanupTimer)
+      task._cleanupTimer = undefined
     }
   }
 
@@ -1759,33 +1785,23 @@ export const GroundworkPlugin = async ({ client, directory }) => {
       }),
 
       background_input: tool({
-        description: 'Send interrupt signal or input to a running background task. Primary use: interrupt stuck tasks with Ctrl+C (\\x03). Interactive input is limited - tasks must be designed to accept it.',
+        description: 'Send a steering message, input, or interrupt to a running background task. Use type="steer" to send semantic instructions like "where are you at?" or "try approach B". Use type="interrupt" for Ctrl+C. Use type="input" for raw stdin text.',
         args: {
-          task_id: z.string().describe('Task ID to send input to'),
-          data: z.string().describe('Input to send. Common: "\\x03" = Ctrl+C (interrupt), "\\x04" = Ctrl+D (EOF). For interactive input, use plain text.'),
+          task_id: z.string().describe('Task ID to send message to'),
+          data: z.string().describe('The message, instruction, or control sequence to send'),
+          type: z.enum(['steer', 'interrupt', 'input']).optional().describe('Type of message: "steer" = semantic steering instruction (default), "interrupt" = Ctrl+C abort, "input" = raw text input'),
         },
         async execute(args) {
           try {
             const task = manager.getTask(args.task_id)
             if (!task) return `[ERROR] Task not found: ${args.task_id}`
-            if (task.status !== 'running') return `[ERROR] Cannot send input to task with status "${task.status}". Task must be running.`
             if (!task.sessionID) return `[ERROR] Task has no session ID.`
-            
-            // Handle special control characters
-            let inputData = args.data
-            const controlChars = {
-              '\\x03': '\x03',  // Ctrl+C
-              '\\x04': '\x04',  // Ctrl+D
-              '\\n': '\n',      // Newline
-              '\\r': '\r',      // Carriage return
-              '\\t': '\t',      // Tab
-            }
-            for (const [escape, char] of Object.entries(controlChars)) {
-              inputData = inputData.replaceAll(escape, char)
-            }
-            
-            // For Ctrl+C, abort the session directly for reliability
-            if (inputData === '\x03') {
+
+            const msgType = args.type || 'steer'
+
+            // Handle interrupt type — always Ctrl+C abort
+            if (msgType === 'interrupt' || args.data === '\\x03') {
+              if (task.status !== 'running') return `[ERROR] Cannot interrupt task with status "${task.status}". Task must be running.`
               try {
                 await client.session.abort({ path: { id: task.sessionID } })
                 task.status = 'interrupt'
@@ -1800,8 +1816,100 @@ export const GroundworkPlugin = async ({ client, directory }) => {
                 return `[ERROR] Failed to abort task: ${abortErr instanceof Error ? abortErr.message : String(abortErr)}`
               }
             }
-            
-            // For other input, send as prompt to the background session
+
+            // Handle steer type — semantic steering message
+            if (msgType === 'steer') {
+              const steeringPrefix = '[STEERING MESSAGE FROM ORCHESTRATOR] '
+              const steeringSuffix = '\n\n[End steering message. Continue your work incorporating this guidance.]'
+              const fullMessage = steeringPrefix + args.data + steeringSuffix
+
+              if (task.status === 'running') {
+                // Mid-task steering: inject message, agent picks it up on next turn
+                await client.session.prompt({
+                  path: { id: task.sessionID },
+                  body: {
+                    noReply: true,
+                    parts: [{ type: 'text', text: fullMessage, synthetic: true }],
+                  },
+                })
+
+                task.stuckNotified = false
+                task.stablePolls = 0
+                if (task.progress) task.progress.lastUpdate = new Date()
+
+                return `Steering message sent to running task ${args.task_id}: "${truncateText(args.data, 100)}"`
+              }
+
+              if (task.status === 'completed') {
+                // Post-completion reactivation: send new prompt to existing session
+                // Guard: check session is still available (not cleaned up)
+                if (!task.sessionID) {
+                  return `[ERROR] Cannot reactivate task ${args.task_id}: session has been cleaned up. Start a new task instead.`
+                }
+                // Acquire concurrency slot — fail fast if at limit (don't queue behind existing tasks)
+                const key = task.agent
+                const ccm = manager.concurrencyManager
+                const currentCount = ccm.counts.get(key) ?? 0
+                if (ccm.defaultLimit !== Infinity && currentCount >= ccm.defaultLimit) {
+                  return `[ERROR] Cannot reactivate task ${args.task_id}: concurrency limit reached for agent "${key}"`
+                }
+                await ccm.acquire(key)
+                task.concurrencyKey = key
+
+                // Reactivate the task
+                manager.cancelSessionCleanup(task)
+                task.status = 'running'
+                task.error = ''
+                task.completing = false
+                task.autoCancelled = false
+                task.stuckNotified = false
+                task.toolErrorNotified = false
+                task.stablePolls = 0
+                task.lastMsgCount = undefined
+                task.progress = { toolCalls: 0, lastUpdate: new Date() }
+
+                // Persist state change so background_list reflects "running" immediately
+                await manager.persistResult(task)
+
+                // Send the prompt async — agent will process it
+                manager.client.session.promptAsync?.({
+                  path: { id: task.sessionID },
+                  body: {
+                    parts: [{ type: 'text', text: fullMessage, synthetic: true }],
+                  },
+                }).catch(async (error) => {
+                  const msg = error instanceof Error ? error.message : String(error)
+                  task.status = 'error'
+                  task.error = `Reactivation failed: ${msg}`
+                  task.completedAt = new Date()
+                  if (task.concurrencyKey) { manager.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
+                  await manager.persistResult(task)
+                  manager.markForNotification(task)
+                  void manager.notifyParentSession(task)
+                })
+
+                // Restart polling
+                manager.startPolling()
+                return `Task ${args.task_id} reactivated with steering message: "${truncateText(args.data, 100)}"`
+              }
+
+              return `[ERROR] Cannot steer task with status "${task.status}". Only running or completed tasks can be steered.`
+            }
+
+            // Handle input type — raw text (backward compatible)
+            if (task.status !== 'running') return `[ERROR] Cannot send input to task with status "${task.status}". Task must be running.`
+            let inputData = args.data
+            const controlChars = {
+              '\\x03': '\x03',
+              '\\x04': '\x04',
+              '\\n': '\n',
+              '\\r': '\r',
+              '\\t': '\t',
+            }
+            for (const [escape, char] of Object.entries(controlChars)) {
+              inputData = inputData.replaceAll(escape, char)
+            }
+
             await client.session.prompt({
               path: { id: task.sessionID },
               body: {
@@ -1809,12 +1917,11 @@ export const GroundworkPlugin = async ({ client, directory }) => {
                 parts: [{ type: 'text', text: inputData, synthetic: true }],
               },
             })
-            
-            // Reset stuck detection since we got new input
+
             task.stuckNotified = false
             task.stablePolls = 0
             if (task.progress) task.progress.lastUpdate = new Date()
-            
+
             return `Input sent to task ${args.task_id}: "${truncateText(inputData, 50)}"`
           } catch (error) {
             return `[ERROR] Failed to send input: ${error instanceof Error ? error.message : String(error)}`

@@ -5,7 +5,7 @@ Workflow plugin for OpenCode and Cursor providing structured development practic
 ## Features
 
 - **Skills**: PRD-driven development, advisor gates, BDD implementation, context management
-- **Commands**: 9 workflow commands exposed in Cursor
+- **Commands**: 10 workflow commands exposed in Cursor
 - **Hooks**: Session bootstrap with workflow rule reinforcement
 
 ## Installation

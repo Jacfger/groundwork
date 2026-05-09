@@ -64,16 +64,17 @@ The advisor NEVER opens with filler phrases: "Great question!", "That's a great 
 7. Record each escalation reason and the chosen follow-up action.
 8. **NEVER declare a task complete without a completion gate advisor nod.**
 9. Never treat "another skill applies" as a reason to skip advisor checkpoints when risk/ambiguity exists.
+10. **ALWAYS use `background_wait` after triggering the advisor.** After launching the advisor via `background_task(agent: "advisor", ...)`, immediately call `background_wait(task_id)` to block until the advisor responds. Do NOT fire-and-forget the advisor — its response is required before proceeding.
 
 ## Workflow
 
 1. Start in executor mode and attempt the task normally.
 2. At each checkpoint, ask: "Can I proceed confidently without escalation?"
-  3. If no, invoke `advisor` subagent with decision context (see reference.md).
+  3. If no, invoke `advisor` subagent with decision context (see reference.md), then **`background_wait`** for the result.
   4. Accept advisor response: Plan / Correction / Stop.
   5. Resume executor mode, implement, and verify outcomes.
-  6. **Before claiming done: invoke completion gate (see below).**
-  7. Only after advisor nod: declare task complete to user.
+  6. **Before claiming done: invoke completion gate (see below), then `background_wait` for advisor response.**
+  7. Only after advisor APPROVE: declare task complete to user.
 
 ## Decision Escalation Checkpoints
 
@@ -189,12 +190,12 @@ The advisor MUST anchor claims to specific artifacts:
 
 ## Implementation Notes
 
-- Invoke the advisor using `task` with **`subagent_type: "advisor"`**. The advisor agent has full read access and strategic analysis capabilities. You MUST use exactly `subagent_type: "advisor"` — never "orchestrator", "general-purpose", "coder", or any other type. This is the ONLY place where `task` is used instead of `background_task`.
+- Invoke the advisor using `background_task` with `agent: "advisor"`. The advisor agent has full read access and strategic analysis capabilities. You MUST use exactly `agent: "advisor"`. The advisor is invoked the same way as all other subagents — via `background_task`, never via `task`.
   - **The advisor agent reads files directly** — point it to files to inspect. It will read and ground its advice in actual code.
-- **After invoking the advisor, use `background_wait` to block until the advisor responds.** This replaces the old pattern of launching and waiting for a notification. Example:
+- **After invoking the advisor, use `background_wait` to block until the advisor responds.** Example:
   ```
-  task(subagent_type="advisor", ...)  → Triggers advisor
-  background_wait(task_id="...")      → Blocks until advisor responds
+  background_task(agent="advisor", description="...", prompt="...")  → Launches advisor
+  background_wait(task_id="bg_xxx")                                  → Blocks until advisor responds
   ```
 - **Advisor is READ-ONLY. The advisor MUST NOT call `background_task`, `background_output`, `background_list`, or any other background task tools.** The advisor provides strategic guidance only; it does not execute work or delegate to other agents.
 - **Output is persisted automatically** — the task result is returned directly.

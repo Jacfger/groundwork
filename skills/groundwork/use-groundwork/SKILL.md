@@ -10,14 +10,14 @@ description: Bootstrap skill for the groundwork workflow suite. Loaded at every 
 ## Core Rules (Non-Negotiable)
 
 1. **Always use `question` tool** instead of ending the conversation. Never leave the user without a next step.
-2. **ALWAYS use `background_task` instead of `task` or `delegate`.** Never call the `task` or `delegate` tools. For ALL subagent work — exploration, coding, research, parallel tasks — use `background_task`. Then use `background_list` to monitor progress and `background_output` to retrieve results after `<system-reminder>` notification. The ONLY exception: if you absolutely must block until the result arrives before proceeding, use `delegate` as a last resort.
-    - **⚠️ ADVISOR-GATE IS THE ONLY EXCEPTION TO THIS RULE.** When invoking advisor-gate (rule 7/8), you MUST use `task` with `subagent_type: "advisor"` — NOT `background_task`, and NOT any other agent type (not "orchestrator", not "general-purpose", etc.). The advisor agent is the only one that should be invoked via `task`.
+2. **ALWAYS use `background_task` for ALL subagent work.** Never call the `task` or `delegate` tools. For ALL subagent work — exploration, coding, research, parallel tasks, AND advisor — use `background_task`. Then use `background_wait` to block until the result arrives, or wait for `<system-reminder>` notification and use `background_output`.
+    - **Advisor**: Use `background_task(agent: "advisor", description: "...", prompt: "...")` then `background_wait(task_id)` to block until the advisor responds. Do NOT use `task` with `subagent_type` — it is unreliable in this environment.
 3. **No worktrees.** For new work, continue in the same session OR offer `/handoff` via `session-continue` skill. User chooses.
 4. **Never commit PRDs** to git. Spec docs live in `docs/prds/` but are never staged.
 5. **Always use `create-prd`** before implementation of non-trivial features (≥1 day). Never start coding a feature without an approved master PRD.
 6. **Steer before nesting.** Small direction changes update the master PRD via Steer Log (see `create-prd`). Only invoke `nested-prd` for architectural pivots or scope increases >1 day.
 7. **`advisor-gate` is MANDATORY before declaring done.** You NEVER declare a task complete without first invoking the `advisor-gate` completion gate and receiving APPROVE. No exceptions. Confidence without verification is an anti-pattern.
-8. **No self-review.** Use the **advisor** agent via `task` with `subagent_type: "advisor"` for any technical uncertainty, not internal reasoning loops. You MUST specify exactly `subagent_type: "advisor"` — never "orchestrator", "general-purpose", or any other type. This is the ONLY place where `task` is used instead of `background_task`.
+8. **No self-review.** Use the **advisor** agent via `background_task(agent: "advisor", ...)` for any technical uncertainty, not internal reasoning loops. Always follow with `background_wait(task_id)` to block until the advisor responds.
 9. **BDD over unit tests, validation over verification.** For any visible UI change or bug, validate with actual visual inspection (XCUITest, Playwright) before and after — not just code assertions. For non-UI work, prefer integration or end-to-end tests that validate behavior over unit tests that verify implementation.
 10. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
 11. **Prefer watch/follow variants of commands** when available, now that PTY makes it practical. Examples: use `gh pr checks --watch` instead of polling `gh pr checks`; use `jest --watch` instead of one-shot `jest`; use `kubectl get pods --watch` instead of repeated calls. If a CLI tool has a `--watch`, `--follow`, `-f`, or `--tail` flag, prefer it over running the command repeatedly.
@@ -150,6 +150,33 @@ Background tasks run in their own session context. The `parent_session` field in
 - Do not run self-review in place of advisor escalation
 - Do not use `bash` for long-running/interactive commands — use `pty_spawn` and friends
 - Do not poll `background_output` — wait for `<system-reminder>` notification
+
+## Background Task Steering
+
+Background tasks support three interaction modes via `background_input`:
+
+| Type | Use when | Behavior |
+|------|----------|----------|
+| `steer` (default) | Running task: inject guidance; Completed task: reactivate with new prompt | Message prefixed with `[STEERING MESSAGE FROM ORCHESTRATOR]` |
+| `interrupt` | Task needs to be killed immediately | Calls `session.abort()`, sets status to `interrupt` |
+| `input` | Raw text input (backward compatible) | Injects text into running session |
+
+### Reactivation
+Completed tasks can be reactivated by sending a `steer` message. This:
+- Sends a new prompt to the existing session (multi-turn conversation)
+- Resets all state (status, polls, progress)
+- Acquires concurrency slot
+- Restarts polling
+- Session is kept alive for 5 minutes after completion for reactivation window
+
+### Auto-Preamble
+Every background task automatically gets a preamble prepended: `[BACKGROUND TASK RULES — MANDATORY]` telling the agent:
+- Never call `question` or tools that wait for user input
+- Never call `task`, `delegate`, or `background_*` tools
+- Make decisions autonomously
+- Return final result in last message
+
+This is the **soft prevention** layer. The **hard deny** layer in `opencode.json` (`"question": "deny"` for coder/explore/advisor agents) catches any agent that ignores the preamble.
 
 ## Skill Invocation Pattern
 
