@@ -8,7 +8,10 @@ Add to `opencode.json`:
 
 ```json
 {
-  "plugin": ["./plugins/groundwork"]
+  "plugin": [
+    "opencode-pty",
+    "groundwork@git+https://github.com/IniZio/groundwork.git"
+  ]
 }
 ```
 
@@ -54,8 +57,6 @@ Restart OpenCode. Skills auto-discover.
 
 ```bash
 bun test        # run tests
-bun run build   # bundle for distribution
-bun run typecheck
 ```
 
-TypeScript source in `src/`. Bun loads TS natively — no build needed for dev.
+TypeScript source in `src/`. Bun loads TS natively — no build needed.
