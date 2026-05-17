@@ -26,8 +26,6 @@ export interface TaskInfo {
   queuedAt?: Date
   startedAt?: Date
   completedAt?: Date
-  pollCount: number
-  lastPollAt?: Date
   lastActivityAt?: Date
   error?: string
   progress?: TaskProgress
@@ -35,8 +33,6 @@ export interface TaskInfo {
   concurrencyGroup?: string
   beforeSnapshot?: any // DirectorySnapshot from snapshot.ts
   result?: TaskResult
-  completion_timer?: ReturnType<typeof setTimeout>
-  cleanup_timer?: ReturnType<typeof setTimeout>
 }
 
 /** Result returned when a task completes */

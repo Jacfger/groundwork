@@ -1,4 +1,4 @@
-import { formatDuration, truncateText, sleep, extractMessages, extractFailureContext } from './helpers.js'
+import { formatDuration, truncateText, extractMessages, extractFailureContext } from './helpers.js'
 import { formatFileChanges } from './snapshot.js'
 
 const STUCK_THRESHOLD_MS = 60_000
@@ -17,126 +17,105 @@ export function formatTaskStatus(task: any): string {
   return `Task ${task.id}: ${task.description} [${task.agent}] — ${statusNote} (${duration})`
 }
 
-export function formatFailureContext(task: any, messages: any[]): string {
-  if (!messages || messages.length === 0) return ''
-
-  const lines: string[] = []
-  lines.push('=== Failure Context ===')
-  lines.push('')
-
-  // Task progress info
-  if (task.progress) {
-    lines.push(`Tool calls made: ${task.progress.toolCalls || 0}`)
-    if (task.progress.lastTool) {
-      lines.push(`Last tool used: ${task.progress.lastTool}`)
-    }
-  }
-
-  // Last messages
-  const lastMessages = messages.slice(-5)
-  for (const msg of lastMessages) {
-    const role = msg.info?.role || 'unknown'
-    const timestamp = msg.info?.timestamp || msg.info?.created_at || ''
-
-    if (role === 'assistant') {
-      lines.push(`[${timestamp}] Assistant:`)
-      for (const part of msg.parts || []) {
-        if (part.type === 'text' && part.text) {
-          lines.push(`  ${truncateText(part.text, 200)}`)
-        } else if (part.type === 'tool' && part.state) {
-          if (part.state.status === 'error') {
-            lines.push(`  [Tool ERROR: ${part.tool}] ${part.state.title || 'unknown error'}`)
-          } else {
-            lines.push(`  [Tool: ${part.tool}] ${part.state.title || ''}`)
-          }
-        }
-      }
-    } else if (role === 'tool') {
-      lines.push(`[${timestamp}] Tool result:`)
-      for (const part of msg.parts || []) {
-        if (part.type === 'text' && part.text) {
-          lines.push(`  ${truncateText(part.text, 200)}`)
-        }
-      }
-    }
-    lines.push('')
-  }
-
-  // Summary
-  lines.push('=== End Failure Context ===')
-
-  return lines.join('\n')
+/**
+ * Extract TASK_SUMMARY block from message text.
+ * Returns the block content (between markers) or null.
+ */
+function extractTaskSummaryBlock(text: string): string | null {
+  const match = text.match(/<!--\s*TASK_SUMMARY_START\s*-->([\s\S]*?)<!--\s*TASK_SUMMARY_END\s*-->/)
+  return match ? match[1].trim() : null
 }
 
-export async function formatTaskResult(task: any, client: any): Promise<string> {
-  if (!task.sessionID) return 'Error: Task has no sessionID'
-  const maxAttempts = 5
+function extractStatus(summaryBlock: string): string {
+  const match = summaryBlock.match(/^STATUS:\s*(\S+)/m)
+  return match ? match[1].toLowerCase() : 'unknown'
+}
+
+/**
+ * Format the structured task result.
+ * Simple 2-step approach: read session messages once, extract text and summary block.
+ */
+export async function formatTaskResult(task: any, client: any, opts?: { sessionID?: string }): Promise<string> {
+  const sessionId = opts?.sessionID || task.sessionID || task.session
   const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
-  const header = `Task Result\n\nTask ID: ${task.id}\nDescription: ${task.description}\nDuration: ${duration}\nSession ID: ${task.sessionID}\n\n---\n\n`
-  const fileChangesSection = task.fileChanges ? `\n\n---\n\n📁 File Changes\n${formatFileChanges(task.fileChanges)}` : ''
-  let prevMsgCount = -1
-  let bestContent = ''
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      // Longer wait on first attempt to give session API time to commit messages
-      if (attempt === 0) await sleep(3000)
-      else if (attempt > 0) await sleep(2000 * attempt)
-      const resp = await client.session.messages({ path: { id: task.sessionID } })
-      const messages = extractMessages(resp)
-      if (!messages.length) {
-        if (attempt < maxAttempts - 1) continue
-        break
-      }
-      const msgCount = messages.length
-      const relevant = messages.filter((m: any) => m.info?.role === 'assistant' || m.info?.role === 'tool')
-      if (!relevant.length) {
-        // No assistant messages yet — retry unless this is the last attempt
-        if (attempt < maxAttempts - 1) continue
-        break
-      }
-      const extracted: string[] = []
-      for (const msg of relevant) {
-        for (const part of msg.parts ?? []) {
-          if (part.type === 'text' && part.text) {
-            extracted.push(part.text)
-          } else if (part.type === 'reasoning' && part.text) {
-            extracted.push(part.text)
-          } else if (part.type === 'thinking' && part.text) {
-            extracted.push(part.text)
-          } else if (part.type === 'tool' && part.state) {
-            if (part.state.status === 'completed' && part.state.title) {
-              extracted.push(`[Tool: ${part.tool}] ${part.state.title}`)
-            } else if (part.state.status === 'error') {
-              extracted.push(`[Tool: ${part.tool}] ERROR: ${part.state.title || 'unknown error'}`)
-            }
-          }
+
+  let resultText = ''
+  let summaryBlock: string | null = null
+
+  if (!sessionId) {
+    return buildResultOutput(task, duration, null, '')
+  }
+
+  // Step 1: Read session messages once (no polling — prompt already resolved)
+  try {
+    const resp = await client.session.messages({ path: { id: sessionId }, query: { limit: 500 } })
+    const messages = extractMessages(resp)
+
+    // Scan ALL assistant messages (newest first) for text
+    const assistantMsgs = messages.filter((m: any) => m.info?.role === 'assistant')
+    for (let i = assistantMsgs.length - 1; i >= 0; i--) {
+      const msg = assistantMsgs[i]
+      const textParts: string[] = []
+      for (const part of msg.parts ?? []) {
+        if ((part.type === 'text' || part.type === 'reasoning' || part.type === 'thinking') && part.text?.trim()) {
+          textParts.push(part.text.trim())
         }
       }
-      const content = extracted.filter(t => t.length > 0).join('\n\n')
-
-      // For failed tasks, append failure context
-      let failureContext = ''
-      if (task.status === 'error' || task.status === 'interrupt') {
-        failureContext = await extractFailureContext(task, client) as string || ''
+      const msgText = textParts.join('\n\n')
+      if (msgText && msgText.length > resultText.length) {
+        resultText = msgText
       }
-
-      const fullContent = failureContext
-        ? content + '\n\n' + failureContext
-        : content
-
-      if (fullContent.length > bestContent.length) bestContent = fullContent
-      // Only return early if we have real content (not just tool call markers)
-      if (msgCount === prevMsgCount && bestContent.length > 50) return header + bestContent + fileChangesSection
-      prevMsgCount = msgCount
-      if (attempt >= maxAttempts - 1) return header + (bestContent || '(No text output)') + fileChangesSection
-    } catch (err) {
-      if (attempt >= maxAttempts - 1) {
-        if (bestContent) return header + bestContent + fileChangesSection
-        return `${header}Error extracting task result: ${err instanceof Error ? err.message : String(err)}`
+      const block = extractTaskSummaryBlock(msgText)
+      if (block) {
+        summaryBlock = block
+        break
       }
     }
+  } catch {}
+
+  return buildResultOutput(task, duration, summaryBlock, resultText)
+}
+
+function buildResultOutput(task: any, duration: string, summaryBlock: string | null, fallbackText: string): string {
+  const lines: string[] = []
+
+  if (summaryBlock) {
+    const status = extractStatus(summaryBlock)
+    lines.push(`TASK RESULT: ${task.id} [${status.toUpperCase()}]`)
+    lines.push(`DESCRIPTION: ${task.description}`)
+    lines.push(`DURATION: ${duration}`)
+    lines.push('')
+    lines.push('--- BEGIN TASK_SUMMARY ---')
+    lines.push(summaryBlock)
+    lines.push('--- END TASK_SUMMARY ---')
+  } else if (fallbackText) {
+    // Has text but no structured block — surface what we have
+    lines.push(`TASK RESULT: ${task.id}`)
+    lines.push(`DESCRIPTION: ${task.description}`)
+    lines.push(`DURATION: ${duration}`)
+    lines.push('')
+    lines.push(fallbackText)
+    lines.push('')
+    // Check if the text mentions file operations
+    const hasFileOps = /\b(created|modified|wrote|updated|deleted|renamed)\b/i.test(fallbackText) ||
+                       /\[path\]|\[bash\]|\[op\]|\[inbox\]/.test(fallbackText)
+    if (hasFileOps) {
+      lines.push('NOTE: Output recovered from session messages (no TASK_SUMMARY block found).')
+    } else if (/\b(error|fail|exception|traceback)\b/i.test(fallbackText)) {
+      lines.push('NOTE: Output appears to contain an error (no TASK_SUMMARY block found).')
+    } else {
+      lines.push('NOTE: No structured TASK_SUMMARY block found.')
+    }
+  } else {
+    // Completely empty — nothing recoverable
+    lines.push(`TASK RESULT: ${task.id} [UNKNOWN]`)
+    lines.push(`DESCRIPTION: ${task.description}`)
+    lines.push(`DURATION: ${duration}`)
+    lines.push('')
+    lines.push('(No output — task produced no text)')
   }
-  return header + (bestContent || '(No text output)') + fileChangesSection
+
+  return lines.join('\n')
 }
 
 export function buildNotificationText({ task, duration, statusText, allComplete, remainingCount, completedTasks, artifactPath }: {
@@ -149,19 +128,17 @@ export function buildNotificationText({ task, duration, statusText, allComplete,
   artifactPath?: string
 }): string {
   const desc = task.description || task.id
-  const isFailed = task.status === 'error' || task.status === 'interrupt' || task.status === 'cancelled'
 
   if (allComplete) {
     const succeeded = completedTasks.filter((t: any) => t.status === 'completed')
     const failed = completedTasks.filter((t: any) => t.status !== 'completed')
     const lines: string[] = []
-    if (succeeded.length) lines.push(...succeeded.map((t: any) => `✓ ${t.id}: ${t.description}`))
-    if (failed.length) lines.push(...failed.map((t: any) => `✗ ${t.id}: ${t.description} [${t.status}]`))
+    if (succeeded.length) lines.push(...succeeded.map((t: any) => `[OK] ${t.id}: ${t.description}`))
+    if (failed.length) lines.push(...failed.map((t: any) => `[FAIL] ${t.id}: ${t.description} [${t.status}]`))
     if (!lines.length) lines.push(`${task.id}: ${desc} [${task.status}]`)
-    return `<system-reminder>\n[ALL DONE]\n${lines.join('\n')}${artifactPath ? `\nArtifact: ${artifactPath}` : ''}\n</system-reminder>`
+    return `<system-reminder>\n[ALL DONE]\n${lines.join('\n')}${artifactPath ? `\nArtifact: ${artifactPath}` : ''}\n-> Call background_output(task_id) to read results. Check STATUS field — if "stuck" or "partial", steer with background_input(type="steer").\n</system-reminder>`
   }
 
-  // Build failure context for single task notification
   let failureContext = ''
   if (task.status === 'error' || task.status === 'interrupt') {
     const toolCalls = task.progress?.toolCalls || 0
@@ -173,8 +150,16 @@ export function buildNotificationText({ task, duration, statusText, allComplete,
     failureContext += artifactPath ? `\nCheck artifact for full details: ${artifactPath}` : ''
   }
 
-  return `<system-reminder>\n[${statusText}] ${task.id}: ${desc} (${duration})${task.error ? ` — ${task.error}` : ''}${failureContext}${remainingCount > 0 ? ` — ${remainingCount} remaining` : ''}\n</system-reminder>`
+  const steerHint = (task.status === 'completed')
+    ? `\n-> Call background_output("${task.id}") to read result. If STATUS is "stuck" or "partial", steer with background_input(type="steer").`
+    : (task.status === 'error' || task.status === 'interrupt')
+    ? `\n-> Task failed. Call background_output("${task.id}") for details. Steer or re-launch.`
+    : ''
+
+  return `<system-reminder>\n[${statusText}] ${task.id}: ${desc} (${duration})${task.error ? ` — ${task.error}` : ''}${failureContext}${remainingCount > 0 ? ` — ${remainingCount} remaining` : ''}${steerHint}\n</system-reminder>`
 }
+
+// --- Task list formatting (emoji-free) ---
 
 export function formatActivityTime(lastUpdate: Date | undefined): string {
   if (!lastUpdate) return ''
@@ -195,7 +180,6 @@ export function isTaskStuck(task: any): boolean {
 export function formatTaskList(tasks: any[], sessionID: string, options: any = {}): string {
   if (!tasks.length) return `No background tasks for ${sessionID}.`
 
-  // Group tasks by status
   const groups = {
     running: tasks.filter((t: any) => t.status === 'running'),
     pending: tasks.filter((t: any) => t.status === 'pending'),
@@ -213,7 +197,6 @@ export function formatTaskList(tasks: any[], sessionID: string, options: any = {
   const totalCancelled = groups.cancelled.length
   const totalActive = totalRunning + totalPending + totalWaiting
 
-  // Build header summary
   const headerParts: string[] = []
   if (totalActive > 0) headerParts.push(`${totalActive} active`)
   if (totalWaiting > 0) headerParts.push(`${totalWaiting} waiting`)
@@ -225,9 +208,8 @@ export function formatTaskList(tasks: any[], sessionID: string, options: any = {
   lines.push(`Background tasks for ${sessionID} — ${tasks.length} total${headerParts.length ? ` (${headerParts.join(', ')})` : ''}`)
   lines.push('')
 
-  // Helper to format a single task with enhanced info
   const formatTask = (task: any, isCompact = false) => {
-    const status = task.status === 'running' ? 'run' : task.status === 'pending' ? 'q' : task.status === 'completed' ? 'done' : task.status === 'error' ? 'err' : task.status === 'cancelled' ? 'x' : task.status === 'interrupt' ? '!' : task.status
+    const status = task.status === 'running' ? 'RUN' : task.status === 'pending' ? 'QUEUED' : task.status === 'completed' ? 'DONE' : task.status === 'error' ? 'ERR' : task.status === 'cancelled' ? 'CANCELLED' : task.status === 'interrupt' ? 'INTERRUPTED' : task.status
     const duration = task.status === 'pending' ? formatDuration(task.queuedAt, undefined) : formatDuration(task.startedAt, task.completedAt)
 
     if (isCompact) {
@@ -236,73 +218,52 @@ export function formatTaskList(tasks: any[], sessionID: string, options: any = {
 
     let line = `${task.id}: ${task.description} [${task.agent}] ${status} (${duration})`
 
-    // Add progress indicators for running tasks
     if (task.status === 'running') {
       const stuck = isTaskStuck(task)
       const activity = formatActivityTime(task.progress?.lastUpdate)
       const toolCalls = task.progress?.toolCalls ?? 0
       const lastTool = task.progress?.lastTool
-
       const indicators: string[] = []
-      if (stuck) indicators.push('⚠️ STUCK')
+      if (stuck) indicators.push('STUCK')
       if (toolCalls > 0) indicators.push(`${toolCalls} tools`)
       if (lastTool) indicators.push(`last: ${lastTool}`)
       if (activity) indicators.push(activity)
-
-      if (indicators.length) {
-        line += ` — ${indicators.join(' | ')}`
-      }
+      if (indicators.length) line += ` — ${indicators.join(' | ')}`
     }
 
     return line
   }
 
-  // Running tasks
   if (groups.running.length > 0) {
-    lines.push(`▶ Running (${groups.running.length}):`)
-    for (const task of groups.running) {
-      lines.push(`  ${formatTask(task)}`)
-    }
+    lines.push(`[RUNNING] (${groups.running.length}):`)
+    for (const task of groups.running) lines.push(`  ${formatTask(task)}`)
     lines.push('')
   }
 
-  // Pending tasks
   if (groups.pending.length > 0) {
-    lines.push(`⏳ Pending (${groups.pending.length}):`)
-    for (const task of groups.pending) {
-      lines.push(`  ${formatTask(task)}`)
-    }
+    lines.push(`[PENDING] (${groups.pending.length}):`)
+    for (const task of groups.pending) lines.push(`  ${formatTask(task)}`)
     lines.push('')
   }
 
-  // Completed tasks
   if (groups.completed.length > 0) {
-    lines.push(`✓ Completed (${groups.completed.length}):`)
-    for (const task of groups.completed) {
-      lines.push(`  ${formatTask(task)}`)
-    }
+    lines.push(`[COMPLETED] (${groups.completed.length}):`)
+    for (const task of groups.completed) lines.push(`  ${formatTask(task)}`)
     lines.push('')
   }
 
-  // Error tasks
   if (groups.error.length > 0) {
-    lines.push(`✗ Failed (${groups.error.length}):`)
-    for (const task of groups.error) {
-      lines.push(`  ${formatTask(task)}`)
-    }
+    lines.push(`[FAILED] (${groups.error.length}):`)
+    for (const task of groups.error) lines.push(`  ${formatTask(task)}`)
     lines.push('')
   }
 
-  // Cancelled tasks
   if (groups.cancelled.length > 0) {
-    lines.push(`⊘ Cancelled (${groups.cancelled.length}):`)
-    for (const task of groups.cancelled) {
-      lines.push(`  ${formatTask(task)}`)
-    }
+    lines.push(`[CANCELLED] (${groups.cancelled.length}):`)
+    for (const task of groups.cancelled) lines.push(`  ${formatTask(task)}`)
     lines.push('')
   }
 
-  // Completion summary when include_completed is true
   if (options.include_completed && (groups.completed.length > 0 || groups.error.length > 0)) {
     const finishedTasks = [...groups.completed, ...groups.error]
     const successCount = groups.completed.length

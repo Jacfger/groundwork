@@ -56,7 +56,6 @@ export function createBackgroundInputTool(deps: ToolDeps) {
               },
             })
             ;(task as any).stuckNotified = false
-            task.stablePolls = 0
             if (task.progress) task.progress.lastUpdate = new Date()
             return `Steering message sent to running task ${args.task_id}: "${truncateText(args.data, 100)}"`
           }
@@ -81,27 +80,29 @@ export function createBackgroundInputTool(deps: ToolDeps) {
             ;(task as any).autoCancelled = false
             ;(task as any).stuckNotified = false
             ;(task as any).toolErrorNotified = false
-            task.stablePolls = 0
-            task.lastMsgCount = undefined
             task.progress = { toolCalls: 0, lastUpdate: new Date() }
 
             await manager.persistResult(task)
 
-            manager.client.session.prompt({
-              path: { id: task.sessionID },
-              body: { parts: [{ type: 'text', text: fullMessage, synthetic: true }] },
-            }).catch(async (error: any) => {
-              const msg = error instanceof Error ? error.message : String(error)
-              task.status = 'error'
-              task.error = `Reactivation failed: ${msg}`
-              task.completedAt = new Date()
-              if (task.concurrencyKey) { manager.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-              await manager.persistResult(task)
-              manager.markForNotification(task)
-              void manager.notifyParentSession(task)
-            })
+            void (async () => {
+              try {
+                await manager.client.session.prompt({
+                  path: { id: task.sessionID! },
+                  body: { parts: [{ type: 'text', text: fullMessage, synthetic: true }] },
+                })
+                await manager.tryCompleteTask(task, 'reactivation')
+              } catch (error: any) {
+                const msg = error instanceof Error ? error.message : String(error)
+                task.status = 'error'
+                task.error = `Reactivation failed: ${msg}`
+                task.completedAt = new Date()
+                if (task.concurrencyKey) { manager.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
+                await manager.persistResult(task)
+                manager.markForNotification(task)
+                void manager.notifyParentSession(task)
+              }
+            })()
 
-            manager.startPolling()
             return `Task ${args.task_id} reactivated with steering message: "${truncateText(args.data, 100)}"`
           }
 
@@ -131,7 +132,6 @@ export function createBackgroundInputTool(deps: ToolDeps) {
         })
 
         ;(task as any).stuckNotified = false
-        task.stablePolls = 0
         if (task.progress) task.progress.lastUpdate = new Date()
 
         return `Input sent to task ${args.task_id}: "${truncateText(inputData, 50)}"`

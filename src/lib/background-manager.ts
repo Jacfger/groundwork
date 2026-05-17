@@ -1,5 +1,5 @@
 // ─── BackgroundManager ─────────────────────────────────────────────────────
-// Manages background task lifecycle: launch, poll, complete, cancel, notify.
+// Manages background task lifecycle: launch, complete, cancel, notify.
 
 import path from 'node:path'
 import { formatDuration, truncateText, sleep, extractMessages, extractFailureContext } from './helpers.js'
@@ -12,14 +12,10 @@ import type { TaskInfo, TaskLaunchInput } from '../types.js'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const POLLING_INTERVAL_MS = 3000
 const TASK_CLEANUP_DELAY_MS = 10 * 60 * 1000   // 10 minutes
 const TASK_TTL_MS = 30 * 60 * 1000              // 30 minutes
-const STUCK_POLL_THRESHOLD = 5
-const STUCK_AUTO_CANCEL_MS = 5 * 60 * 1000      // 5 minutes
 const WAITING_TIMEOUT_MS = 5 * 60 * 1000        // 5 minutes
 const CLEANUP_DELAY_MS = 5 * 60 * 1000          // 5 minutes idle window for reactivation
-const MAX_LIFETIME_MS = 2 * 60 * 60 * 1000      // 2 hours hard limit
 
 // ─── BackgroundManager ──────────────────────────────────────────────────────
 
@@ -29,8 +25,6 @@ export class BackgroundManager {
   pendingNotifications = new Map<string, string[]>()
   pendingByParent = new Map<string, Set<string>>()
   completedTaskSummaries = new Map<string, Array<{ id: string; description?: string; status?: string; error?: string; artifactPath?: string }>>()
-  pollingInterval: ReturnType<typeof setInterval> | undefined
-  completionTimers = new Map<string, ReturnType<typeof setTimeout>>()
   concurrencyManager = new ConcurrencyManager()
   queuesByKey = new Map<string, Array<{ task: TaskInfo; input: TaskLaunchInput }>>()
   artifactPaths = new Map<string, string>()
@@ -82,7 +76,9 @@ export class BackgroundManager {
   // ─── Persistence ────────────────────────────────────────────────────────
 
   async persistResult(task: TaskInfo): Promise<void> {
-    const result = await formatTaskResult(task, this.client)
+    // Pass sessionID explicitly so formatTaskResult can read session messages
+    // even if task.sessionID was cleared (e.g., by session cleanup timer)
+    const result = await formatTaskResult(task, this.client, { sessionID: task.sessionID })
     const duration = formatDuration(task.startedAt ?? new Date(), task.completedAt)
     const metadata = {
       id: task.id,
@@ -138,7 +134,6 @@ export class BackgroundManager {
           queuedAt: result.queued_at ? new Date(result.queued_at) : undefined,
           startedAt: result.started_at ? new Date(result.started_at) : undefined,
           completedAt: result.completed_at ? new Date(result.completed_at) : undefined,
-          pollCount: 0,
           error: result.error,
         }
         this.tasks.set(result.id, task)
@@ -161,7 +156,6 @@ export class BackgroundManager {
         queuedAt: result.queued_at ? new Date(result.queued_at) : undefined,
         startedAt: result.started_at ? new Date(result.started_at) : undefined,
         completedAt: result.completed_at ? new Date(result.completed_at) : undefined,
-        pollCount: 0,
         error: result.error,
       }
       this.tasks.set(taskId, task)
@@ -207,7 +201,6 @@ export class BackgroundManager {
       status: 'pending',
       createdAt: new Date(),
       queuedAt: new Date(),
-      pollCount: 0,
     }
 
     // Check dependencies before queueing
@@ -300,8 +293,6 @@ export class BackgroundManager {
     ;(task as any).parentAgent = input.parentAgent
     ;(task as any).parentMessageID = input.parentMessageID
 
-    this.startPolling()
-
     const launchModel = input.parentModel
       ? { providerID: input.parentModel.providerID, modelID: input.parentModel.modelID }
       : undefined
@@ -312,20 +303,33 @@ export class BackgroundManager {
       parts: [{ type: 'text', text: BACKGROUND_TASK_PREAMBLE + input.prompt, synthetic: true }],
     }
 
-    this.client.session.prompt({
-      path: { id: sessionID },
-      body: promptBody,
-    }).catch(async (error: any) => {
-      const msg = error instanceof Error ? error.message : String(error)
-      task.status = 'interrupt'
-      task.error = msg
-      task.completedAt = new Date()
-      if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-      try { await this.client.session.abort({ path: { id: sessionID } }) } catch {}
-      await this.persistResult(task)
-      this.markForNotification(task)
-      void this.notifyParentSession(task)
-    })
+    // Fire-and-forget wrapper so startTask() returns immediately
+    void (async () => {
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Task timed out')), TASK_TTL_MS)
+        )
+        const result = await Promise.race([
+          this.client.session.prompt({
+            path: { id: sessionID },
+            body: promptBody,
+          }),
+          timeoutPromise,
+        ])
+        // session.prompt() resolves when the agent finishes — reliable completion detection
+        await this.tryCompleteTask(task, 'prompt-resolved')
+      } catch (error: any) {
+        const msg = error instanceof Error ? error.message : String(error)
+        task.status = 'interrupt'
+        task.error = msg
+        task.completedAt = new Date()
+        if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
+        try { await this.client.session.abort({ path: { id: sessionID } }) } catch {}
+        await this.persistResult(task)
+        this.markForNotification(task)
+        void this.notifyParentSession(task)
+      }
+    })()
   }
 
   // ─── Cancel ─────────────────────────────────────────────────────────────
@@ -347,9 +351,6 @@ export class BackgroundManager {
     task.status = 'cancelled'
     task.completedAt = new Date()
     if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-
-    const idleTimer = this.completionTimers.get(task.id)
-    if (idleTimer) { clearTimeout(idleTimer); this.completionTimers.delete(task.id) }
 
     const shouldAbort = options.abortSession !== false
     if (shouldAbort && task.sessionID) {
@@ -382,174 +383,14 @@ export class BackgroundManager {
     }
   }
 
-  // ─── Polling ────────────────────────────────────────────────────────────
-
-  startPolling(): void {
-    if (this.pollingInterval) return
-    this.pollingInterval = setInterval(() => void this.pollRunningTasks(), POLLING_INTERVAL_MS)
-    if (typeof this.pollingInterval?.unref === 'function') this.pollingInterval.unref()
-  }
-
-  stopPolling(): void {
-    if (this.pollingInterval) { clearInterval(this.pollingInterval); this.pollingInterval = undefined }
-    this.concurrencyManager.clear()
-  }
-
-  async pollRunningTasks(): Promise<void> {
-    const running = Array.from(this.tasks.values()).filter(t => t.status === 'running')
-    const waiting = Array.from(this.tasks.values()).filter(t => t.status === 'waiting')
-
-    // Keep polling alive if there are waiting tasks that need dependency checks
-    if (running.length === 0 && waiting.length === 0) { this.stopPolling(); return }
-
-    const now = Date.now()
-
-    // Check waiting tasks for dependency resolution or timeout
-    for (const task of waiting) {
-      const depStatus = this.checkDependencies(task)
-
-      if (depStatus === true) {
-        task.status = 'pending'
-        const key = task.agent.trim()
-        const queue = this.queuesByKey.get(key) ?? []
-        queue.push({
-          task,
-          input: {
-            agent: task.agent,
-            prompt: task.prompt,
-            description: task.description,
-            parentSessionID: task.parentSessionID,
-            parentMessageID: (task as any).parentMessageID,
-            parentModel: (task as any).parentModel,
-            parentAgent: (task as any).parentAgent,
-          }
-        })
-        this.queuesByKey.set(key, queue)
-        void this.processKey(key)
-      } else if (depStatus === 'failed' || depStatus === 'missing') {
-        const missingDeps = task.depends_on?.filter(depId => !this.tasks.has(depId))
-        task.status = 'error'
-        if (missingDeps && missingDeps.length > 0) {
-          task.error = `Dependency not found: ${missingDeps.join(', ')} (these tasks were never launched)`
-        } else {
-          task.error = `Dependency failed: one or more required tasks (${task.depends_on?.join(', ')}) failed or were cancelled`
-        }
-        task.completedAt = new Date()
-        this.markForNotification(task)
-        void this.notifyParentSession(task)
-      } else if (depStatus === false) {
-        const waitingTime = now - task.queuedAt!.getTime()
-        if (waitingTime > WAITING_TIMEOUT_MS) {
-          task.status = 'error'
-          task.error = `Dependency timeout: waited ${formatDuration(task.queuedAt, new Date())} for dependencies (${task.depends_on?.join(', ')}) but they never completed`
-          task.completedAt = new Date()
-          this.markForNotification(task)
-          void this.notifyParentSession(task)
-        }
-      }
-    }
-
-    for (const task of running) {
-      if (!task.sessionID) continue
-      try {
-        const resp = await this.client.session.messages({ path: { id: task.sessionID } })
-        const messages = extractMessages(resp)
-        const count = messages.length
-        if (task.lastMsgCount !== undefined && task.lastMsgCount === count) {
-          task.stablePolls = (task.stablePolls ?? 0) + 1
-        } else { task.stablePolls = 0 }
-        task.lastMsgCount = count
-
-        // Check for repeated tool errors
-        const recentMessages = messages.slice(-10)
-        let toolErrorCount = 0
-        for (const msg of recentMessages) {
-          for (const part of msg.parts || []) {
-            if (part.type === 'tool' && part.state?.status === 'error') toolErrorCount++
-          }
-        }
-        if (toolErrorCount >= 3 && !(task as any).toolErrorNotified) {
-          ;(task as any).toolErrorNotified = true
-          console.error(`[BackgroundManager] Task ${task.id} has ${toolErrorCount} recent tool errors, may be stuck`)
-          if (!task.error) task.error = `Multiple tool errors detected (${toolErrorCount} in last 10 messages)`
-        }
-
-        // Completion detection via poll stability
-        if ((task.stablePolls ?? 0) >= STUCK_POLL_THRESHOLD && count > 0) {
-          const last = messages[messages.length - 1]
-          if (last?.info?.role === 'assistant') await this.tryCompleteTask(task, 'poll-stability')
-        }
-
-        // Stuck detection
-        const lastUpdate = task.progress?.lastUpdate ?? task.startedAt
-        if (lastUpdate) {
-          const idleTime = now - lastUpdate.getTime()
-
-          if (idleTime > 120_000 && !(task as any).stuckNotified) {
-            ;(task as any).stuckNotified = true
-            task.error = `Task appears stuck (no activity for ${formatDuration(lastUpdate, new Date())})`
-          }
-
-          if (idleTime > STUCK_AUTO_CANCEL_MS && !(task as any).autoCancelled) {
-            ;(task as any).autoCancelled = true
-            console.error(`[BackgroundManager] Auto-cancelling stuck task ${task.id} after ${formatDuration(lastUpdate, new Date())}`)
-            await this.cancelTask(task.id, { source: 'auto-cancel-stuck', abortSession: true, skipNotification: false })
-            task.error = `Task auto-cancelled after being stuck for ${formatDuration(lastUpdate, new Date())}`
-            continue
-          }
-        }
-      } catch (err) {
-        console.error(`[BackgroundManager] Error polling task ${task.id}:`, err)
-        if (task.startedAt && now - task.startedAt.getTime() > 60_000) {
-          task.status = 'error'
-          task.error = `Session error: ${err instanceof Error ? err.message : String(err)}`
-          task.completedAt = new Date()
-          if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-          void this.persistResult(task).then(() => {
-            this.markForNotification(task)
-            void this.notifyParentSession(task)
-          })
-        }
-      }
-    }
-
-    // Timeout check
-    for (const task of Array.from(this.tasks.values())) {
-      if (task.status !== 'running' && task.status !== 'pending') continue
-      if (task.status === 'pending' && task.depends_on) continue
-      const ref = task.status === 'pending' ? task.queuedAt : task.startedAt
-      const timeoutMs = (task.timeout ?? 1800) * 1000
-      if (ref && now - ref.getTime() > timeoutMs) {
-        task.status = 'error'; task.error = 'Task timed out'; task.completedAt = new Date()
-        if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-        void this.persistResult(task).then(() => {
-          this.markForNotification(task)
-          void this.notifyParentSession(task)
-        })
-      }
-    }
-
-    // Maximum lifetime check
-    for (const task of Array.from(this.tasks.values())) {
-      if (task.status !== 'running') continue
-      if (task.startedAt && now - task.startedAt.getTime() > MAX_LIFETIME_MS) {
-        console.error(`[BackgroundManager] Task ${task.id} exceeded maximum lifetime (2h), forcing completion`)
-        await this.cancelTask(task.id, { source: 'max-lifetime', abortSession: true, skipNotification: false })
-        task.error = `Task exceeded maximum lifetime of 2 hours`
-      }
-    }
-  }
-
   // ─── Task Completion ────────────────────────────────────────────────────
 
   async tryCompleteTask(task: TaskInfo, _source: string): Promise<void> {
-    if (task.status !== 'running' || (task as any).completing) return
-    ;(task as any).completing = true
+    if (task.status !== 'running') return
 
     try {
       if (task.concurrencyKey) { this.concurrencyManager.release(task.concurrencyKey); task.concurrencyKey = undefined }
-      await sleep(2000)
-      // Set completed status BEFORE persisting so the artifact metadata is correct
+      // No artificial sleep — formatTaskResult polls session.messages with content-aware backoff
       task.status = 'completed'
       task.completedAt = new Date()
       await this.persistResult(task)
@@ -576,8 +417,6 @@ export class BackgroundManager {
       this.markForNotification(task)
       await this.notifyParentSession(task)
       await this.checkWaitingTasks()
-    } finally {
-      ;(task as any).completing = false
     }
   }
 
@@ -643,23 +482,11 @@ export class BackgroundManager {
   handleEvent(event: any): void {
     const props = event.properties
 
-    if (event.type === 'session.idle') {
-      const sessionID = typeof props?.sessionID === 'string' ? props.sessionID : undefined
-      if (!sessionID) return
-      const task = this.findBySession(sessionID)
-      if (!task || task.status !== 'running' || (task as any).completing) return
-      const existingTimer = this.completionTimers.get(task.id)
-      if (existingTimer) return
-      const timer = setTimeout(() => { this.completionTimers.delete(task.id); void this.tryCompleteTask(task, 'session.idle') }, 5000)
-      if (typeof timer?.unref === 'function') timer.unref()
-      this.completionTimers.set(task.id, timer)
-    }
-
     if (event.type === 'session.error') {
       const sessionID = typeof props?.sessionID === 'string' ? props.sessionID : undefined
       if (!sessionID) return
       const task = this.findBySession(sessionID)
-      if (!task || task.status !== 'running' || (task as any).completing) return
+      if (!task || task.status !== 'running') return
       task.status = 'error'
       task.error = typeof props?.error?.message === 'string' ? props.error.message : 'Session error'
       task.completedAt = new Date()
@@ -687,8 +514,6 @@ export class BackgroundManager {
       if (!task || !task.progress) return
       task.progress.lastUpdate = new Date()
       if (partInfo?.tool) { task.progress.toolCalls += 1; task.progress.lastTool = partInfo.tool }
-      const existing = this.completionTimers.get(task.id)
-      if (existing) { clearTimeout(existing); this.completionTimers.delete(task.id) }
     }
   }
 
@@ -707,9 +532,8 @@ export class BackgroundManager {
   }
 
   scheduleTaskRemoval(taskId: string): void {
-    const timer = setTimeout(() => { this.completionTimers.delete(taskId); this.tasks.delete(taskId) }, TASK_CLEANUP_DELAY_MS)
+    const timer = setTimeout(() => { this.tasks.delete(taskId) }, TASK_CLEANUP_DELAY_MS)
     if (typeof timer?.unref === 'function') timer.unref()
-    this.completionTimers.set(taskId, timer)
   }
 
   async notifyParentSession(task: TaskInfo): Promise<void> {
@@ -774,14 +598,5 @@ export class BackgroundManager {
     }
 
     this.scheduleTaskRemoval(task.id)
-  }
-}
-
-// Need to extend TaskInfo with runtime fields
-declare module '../types.js' {
-  interface TaskInfo {
-    lastMsgCount?: number
-    stablePolls?: number
-    // beforeSnapshot is already typed as `any` in types.ts
   }
 }

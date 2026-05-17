@@ -29,6 +29,7 @@ import { createBackgroundStreamTool } from './tools/background-stream.js'
 import { createHandoffSessionTool } from './tools/handoff-session.js'
 import { createReadSessionTool } from './tools/read-session.js'
 import { createRobustReadTool } from './tools/robust-read.js'
+import { createRobustWriteTool } from './tools/robust-write.js'
 import type { ToolDeps } from './tools/deps.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -92,6 +93,7 @@ export const GroundworkPlugin = async ({ client, directory }: { client: any; dir
       handoff_session: createHandoffSessionTool(deps),
       read_session: createReadSessionTool(deps),
       read: createRobustReadTool(deps),
+      write: createRobustWriteTool(deps),
     },
 
     event: async ({ event }: { event: any }) => {

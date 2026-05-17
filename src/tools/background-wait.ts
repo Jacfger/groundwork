@@ -25,9 +25,10 @@ export function createBackgroundWaitTool(deps: ToolDeps) {
         if (!task) return `Task not found: ${args.task_id}`
 
         const timeoutMs = Math.min((args.timeout ?? 3600) * 1000, 7200000)
-        const isActive = (t: any) => t.status === 'pending' || t.status === 'running' || t.status === 'waiting' || t.completing
+        const isActive = (t: any) => t.status === 'pending' || t.status === 'running' || t.status === 'waiting'
         const start = Date.now()
 
+        // Poll until task completes or timeout
         while (isActive(task) && Date.now() - start < timeoutMs) {
           await new Promise(r => setTimeout(r, 2000))
           const current = manager.getTask(args.task_id)
@@ -39,16 +40,22 @@ export function createBackgroundWaitTool(deps: ToolDeps) {
           return `Task ${args.task_id} still ${task.status} after ${formatDuration(new Date(start), new Date())}. Use background_output to check.`
         }
 
+        // Task is complete — read result
         manager.markRead(task.id)
         const persisted = await persistence.read(task.id, task.parentSessionID, manager.directory)
-        if (persisted && !persisted.endsWith('(No text output)') && !persisted.endsWith('(No messages found)') && !persisted.endsWith('(No assistant or tool response found)')) return persisted
-        if (task.status === 'completed') {
+        if (persisted && !persisted.includes('(No text output)') && !persisted.includes('(No messages found)')) {
+          return persisted
+        }
+
+        // Fallback: single attempt to get result
+        if (task.status === 'completed' || task.status === 'error') {
           const freshResult = await formatTaskResult(task, client)
-          if (freshResult && !freshResult.includes('(No text output)')) {
+          if (freshResult) {
             void manager.persistResult(task).catch(() => {})
           }
           return freshResult
         }
+
         return formatTaskStatus(task)
       } catch (error) {
         return `Error waiting for task: ${error instanceof Error ? error.message : String(error)}`

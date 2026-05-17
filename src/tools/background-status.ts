@@ -60,12 +60,7 @@ export function createBackgroundStatusTool(deps: ToolDeps) {
         if (task.status === 'running') {
           const timeSinceActivity = lastUpdate ? formatDuration(lastUpdate, now) : 'N/A'
           lines.push(`Time Since Last Activity: ${timeSinceActivity}`)
-          if (task.stablePolls !== undefined) {
-            const estimatedStatus = task.stablePolls >= 10 ? 'Likely complete (stable for 10+ polls)' : `Active (${task.stablePolls || 0} stable polls)`
-            lines.push(`Estimated Completion: ${estimatedStatus}`)
-          } else {
-            lines.push(`Estimated Completion: Active`)
-          }
+          lines.push(`Estimated Completion: Active (awaiting prompt resolution)`)
         }
 
         if (task.status === 'completed' || task.status === 'error' || task.status === 'cancelled' || task.status === 'interrupt') {
