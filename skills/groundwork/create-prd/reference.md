@@ -169,7 +169,7 @@ T3 (independent, parallel with T1)
 
 ### Parallelization Rules
 
-- **No dependency edges** → tasks can run simultaneously via `background_task`
+- **No dependency edges** → tasks can run simultaneously via the `task` tool
 - **Disjoint file sets** → safe to parallelize
 - **Overlapping files** → MUST run sequentially
 - **Owner/agent** column indicates which agent type handles the task

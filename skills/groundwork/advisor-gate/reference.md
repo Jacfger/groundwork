@@ -82,27 +82,21 @@ Executor follow-up: <next action taken>
 
 ## Proper Invocation Pattern
 
-The advisor must be invoked using `task` with `subagent_type: "advisor"`, then wait for the response using `background_wait`:
+The advisor must be invoked using the builtin `task` tool with `agent: "advisor"`:
 
 ```
-# 1. Trigger the advisor
+# Trigger the advisor and wait for response
 [Tool: task]
-subagent_type: "advisor"
+agent: "advisor"
+description: "Completion gate review"
 prompt: |
   ## Completion Gate Request
   Task: <what was asked>
   What was done: <summary>
   ...
 
-# 2. Wait for response (blocks until advisor completes)
-[Tool: background_wait]
-task_id: <task-id-from-step-1>
-timeout: 300
-
-# 3. Use the result directly
+# The task tool blocks until advisor completes and returns the result directly
 ```
-
-**Do NOT use `background_output` to retrieve advisor results.** The `task` tool returns the result directly when used with `background_wait`.
 
 ## Example: Decision — Architecture with Insight
 

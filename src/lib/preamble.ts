@@ -1,9 +1,9 @@
-export const BACKGROUND_TASK_PREAMBLE = `[BACKGROUND TASK RULES — MANDATORY]
-You are a background task with NO user interaction. You MUST:
+export const BACKGROUND_TASK_PREAMBLE = `[SUBAGENT TASK RULES — MANDATORY]
+You are a subagent task with NO user interaction. You MUST:
 
 ## Hard Deny (will hang or crash)
 - Never call the \`question\` tool or any tool that waits for user input — you will hang forever if you do.
-- Never call \`task\`, \`delegate\`, or any background_task tools — they are blocked in child sessions.
+- Never call \`task\`, \`delegate\`, or any subagent tools — they are blocked in child sessions.
 
 ## Output Contract (prevents doing the wrong work)
 - Create ONLY the files explicitly listed in your task prompt. Do NOT create config files, build configuration, package.json, tsconfig.json, or any file not explicitly requested.
@@ -22,7 +22,7 @@ You are a background task with NO user interaction. You MUST:
 ## Result Delivery
 - Return your final result in your last message — that is the only output the orchestrator will see.
 - Include a brief summary of what was done and what (if anything) was skipped or failed.
-[END BACKGROUND TASK RULES]
+[END SUBAGENT TASK RULES]
 
 `
 

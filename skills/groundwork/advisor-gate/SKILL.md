@@ -57,23 +57,23 @@ The advisor NEVER opens with filler phrases: "Great question!", "That's a great 
 1. Keep one executor accountable for end-to-end progress.
 2. Advisor gives guidance only: insight, plan, correction, or stop signal.
 3. Advisor does not own user-facing output and does not run task tools directly.
-4. **Advisor NEVER uses `background_task`**. Background tasks are for executors only. The advisor provides guidance; the executor implements.
+4. **Advisor NEVER uses `task` tool**. Subagent tasks are for executors only. The advisor provides guidance; the executor implements.
 5. Advisor is read-only — no sunk cost bias, no implementation attachment.
     5. At escalation checkpoints, invoke the `advisor` subagent for guidance.
 6. Escalate only when the executor cannot confidently choose a safe next move.
 7. Record each escalation reason and the chosen follow-up action.
 8. **NEVER declare a task complete without a completion gate advisor nod.**
 9. Never treat "another skill applies" as a reason to skip advisor checkpoints when risk/ambiguity exists.
-10. **ALWAYS use `background_wait` after triggering the advisor.** After launching the advisor via `background_task(agent: "advisor", ...)`, immediately call `background_wait(task_id)` to block until the advisor responds. Do NOT fire-and-forget the advisor — its response is required before proceeding.
+10. **ALWAYS use the `task` tool for advisor consultation.** Use `task(agent="advisor", description="...", prompt="...")` and wait for the response directly. Do NOT fire-and-forget the advisor — its response is required before proceeding.
 
 ## Workflow
 
 1. Start in executor mode and attempt the task normally.
 2. At each checkpoint, ask: "Can I proceed confidently without escalation?"
-  3. If no, invoke `advisor` subagent with decision context (see reference.md), then **`background_wait`** for the result.
+  3. If no, invoke `advisor` subagent with decision context (see reference.md), then wait for the result.
   4. Accept advisor response: Plan / Correction / Stop.
   5. Resume executor mode, implement, and verify outcomes.
-  6. **Before claiming done: invoke completion gate (see below), then `background_wait` for advisor response.**
+  6. **Before claiming done: invoke completion gate (see below), then wait for advisor response.**
   7. Only after advisor APPROVE: declare task complete to user.
 
 ## Decision Escalation Checkpoints
@@ -190,14 +190,10 @@ The advisor MUST anchor claims to specific artifacts:
 
 ## Implementation Notes
 
-- Invoke the advisor using `background_task` with `agent: "advisor"`. The advisor agent has full read access and strategic analysis capabilities. You MUST use exactly `agent: "advisor"`. The advisor is invoked the same way as all other subagents — via `background_task`, never via `task`.
+- Invoke the advisor using the builtin `task` tool with `agent: "advisor"`. The advisor agent has full read access and strategic analysis capabilities. You MUST use exactly `agent: "advisor"`.
   - **The advisor agent reads files directly** — point it to files to inspect. It will read and ground its advice in actual code.
-- **After invoking the advisor, use `background_wait` to block until the advisor responds.** Example:
-  ```
-  background_task(agent="advisor", description="...", prompt="...")  → Launches advisor
-  background_wait(task_id="bg_xxx")                                  → Blocks until advisor responds
-  ```
-- **Advisor is READ-ONLY. The advisor MUST NOT call `background_task`, `background_output`, `background_list`, or any other background task tools.** The advisor provides strategic guidance only; it does not execute work or delegate to other agents.
+- **The `task` tool blocks until the advisor responds, returning the result directly.**
+- **Advisor is READ-ONLY. The advisor MUST NOT call `task`, `delegate`, or any other subagent tools.** The advisor provides strategic guidance only; it does not execute work or delegate to other agents.
 - **Output is persisted automatically** — the task result is returned directly.
 - Track escalation count; avoid uncontrolled loops (max 3 escalations per task before surfacing to user).
 - Fallback only if `advisor` is unavailable: clearly label "simulated advisor checkpoint" and state why.

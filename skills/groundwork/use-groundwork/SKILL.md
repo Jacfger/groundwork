@@ -10,14 +10,14 @@ description: Bootstrap skill for the groundwork workflow suite. Loaded at every 
 ## Core Rules (Non-Negotiable)
 
 1. **Always use `question` tool** instead of ending the conversation. Never leave the user without a next step.
-2. **ALWAYS use `background_task` for ALL subagent work.** Never call the `task` or `delegate` tools. For ALL subagent work — exploration, coding, research, parallel tasks, AND advisor — use `background_task`. Then use `background_wait` to block until the result arrives, or wait for `<system-reminder>` notification and use `background_output`.
-    - **Advisor**: Use `background_task(agent: "advisor", description: "...", prompt: "...")` then `background_wait(task_id)` to block until the advisor responds. Do NOT use `task` with `subagent_type` — it is unreliable in this environment.
+2. **ALWAYS use the builtin `task` tool for ALL subagent work.** For ALL subagent work — exploration, coding, research, parallel tasks, AND advisor — use `task` with `agent` parameter. Then wait for the result directly.
+    - **Advisor**: Use `task(agent="advisor", description="...", prompt="...")` and wait for the response directly.
 3. **No worktrees.** For new work, continue in the same session OR offer `/handoff` via `session-continue` skill. User chooses.
 4. **Never commit PRDs** to git. Spec docs live in `docs/prds/` but are never staged.
 5. **Always use `create-prd`** before implementation of non-trivial features (≥1 day). Never start coding a feature without an approved master PRD.
 6. **Steer before nesting.** Small direction changes update the master PRD via Steer Log (see `create-prd`). Only invoke `nested-prd` for architectural pivots or scope increases >1 day.
 7. **`advisor-gate` is MANDATORY before declaring done.** You NEVER declare a task complete without first invoking the `advisor-gate` completion gate and receiving APPROVE. No exceptions. Confidence without verification is an anti-pattern.
-8. **No self-review.** Use the **advisor** agent via `background_task(agent: "advisor", ...)` for any technical uncertainty, not internal reasoning loops. Always follow with `background_wait(task_id)` to block until the advisor responds.
+8. **No self-review.** Use the **advisor** agent via `task(agent="advisor", ...)` for any technical uncertainty, not internal reasoning loops.
 9. **BDD over unit tests, validation over verification.** For any visible UI change or bug, validate with actual visual inspection (XCUITest, Playwright) before and after — not just code assertions. For non-UI work, prefer integration or end-to-end tests that validate behavior over unit tests that verify implementation.
 10. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
 11. **Prefer watch/follow variants of commands** when available, now that PTY makes it practical. Examples: use `gh pr checks --watch` instead of polling `gh pr checks`; use `jest --watch` instead of one-shot `jest`; use `kubectl get pods --watch` instead of repeated calls. If a CLI tool has a `--watch`, `--follow`, `-f`, or `--tail` flag, prefer it over running the command repeatedly.
@@ -34,95 +34,39 @@ This applies to:
 
 Invoke the relevant skill tool BEFORE any response or action. 1% chance = invoke it. **No exceptions at completion.**
 
-## Background Task Quick Reference
+## Subagent Task Quick Reference
+
+Use the builtin `task` tool to delegate work to subagents:
 
 ```
-background_task(description="...", prompt="...", agent="explore")  → Launch
-background_wait(task_id="bg_xxx", timeout=3600)                     → Block until task completes (replaces polling)
-background_output(task_id="bg_xxx")                                  → Get result (after notification)
-background_list()                                                    → Check status (like pty_list)
-background_status(task_id="bg_xxx")                                  → Detailed health info for one task
-background_stream(task_id="bg_xxx", offset=0)                        → Get partial output from running task
-background_cancel(task_id="bg_xxx")                                  → Cancel one
-background_cancel(all=true)                                          → Cancel all
-background_input(task_id="bg_xxx", data="...")                       → Send input or interrupt signal to a running background task. Useful when a task is stuck waiting for input or needs to be interrupted.
+task(description="...", prompt="...", agent="explore")  → Launch and wait for result
 ```
 
 **Workflow:**
-1. Launch with `background_task`
-2. **Do NOT poll.** Choose ONE of these paths:
-   - **Path A — Fire and forget**: Launch tasks, continue with other work. The system will notify you when tasks complete.
-   - **Path B — Block and wait**: Use `background_wait(task_id)` when you need the result before proceeding. This blocks without spamming.
-   - **Path C — Stream progress**: Use `background_stream(task_id)` for long-running tasks where you want periodic progress updates.
-3. When `<system-reminder>` notification arrives, call `background_output`
-4. You can launch MULTIPLE tasks in parallel for max throughput
+1. Launch with `task` — the tool blocks until the subagent completes and returns the result directly
+2. You can launch MULTIPLE tasks in parallel for max throughput by calling `task` multiple times without waiting
 
-### Background Task Status States
+### Task Status States
 
 Tasks can be in one of the following states:
 
 - `running` — Task is currently executing
 - `completed` — Task finished successfully
 - `failed` — Task encountered an error
-- `cancelled` — Task was manually cancelled
-- `pending` — Task is queued but not yet started
 
 ### Error Handling and Retry Patterns
 
-When a background task fails, the result from `background_output` will include an `error` field with details about what went wrong. To handle errors effectively:
+When a task fails:
 
-- **Check for errors**: Always inspect the `error` field in the result from `background_output` before using the output.
-- **Retry vs Cancel**: Retry a task if the failure appears transient (e.g., network timeout, temporary resource unavailability). Cancel the task if the failure is persistent or indicates a fundamental issue (e.g., syntax error, missing dependency).
-- **Interrupt stuck tasks**: If a task is hanging or stuck waiting for input, use `background_input(task_id="bg_xxx", data="\x03")` to send a Ctrl+C interrupt signal.
+- **Check for errors**: Always inspect the result for error details before using the output
+- **Retry vs Cancel**: Retry a task if the failure appears transient (e.g., network timeout, temporary resource unavailability). Cancel if the failure is persistent or indicates a fundamental issue
 
-### Anti-Polling Rules (CRITICAL)
+### Best Practices
 
-**NEVER do this:**
-```
-❌ while (task.running) { background_list(); background_status(); background_output(); }
-❌ Calling background_output on a completed task hoping for different results
-❌ Calling any background tool more than once for the same task in a row
-```
-
-**This is spam. It wastes tokens, burns context, and achieves nothing. The result will NOT change.**
-
-**Hard rules:**
-- **Call `background_output` EXACTLY ONCE per task** — after the `<system-reminder>` notification, or after `background_wait` returns
-- **Never call `background_output` on a task you already got output from** — if the result is incomplete, that's what the task produced
-- **Never call `background_list` more than once per minute** — status does not change that fast
-- **Never call `background_status` in a loop** — one check is enough
-
-**Instead:**
-- **Waiting on one task?** Use `background_wait(task_id)` — it blocks efficiently with a 2s polling interval internally.
-- **Waiting on multiple tasks?** Launch them all, then do other work. The system notifies you when each completes.
-- **Need progress updates?** Use `background_stream(task_id)` for periodic snapshots without spam.
-- **Just checking if done?** Wait for the `<system-reminder>` notification, then call `background_output` ONCE.
-
-### When to Use Each Tool
-
-| Scenario | Tool | Why |
-|----------|------|-----|
-| Need result before continuing | `background_wait` | Blocks efficiently, returns result directly |
-| Task completed, get output | `background_output` | One-shot retrieval after notification |
-| Monitor long-running task | `background_stream` | Get partial output without blocking |
-| Check if task is stuck | `background_status` | Health check: duration, tool calls, last activity |
-| See all active tasks | `background_list` | Quick status overview |
-| Cancel stuck/hanging task | `background_cancel` | Clean termination |
-| Send input to running task | `background_input` | Interactive input or Ctrl+C interrupt |
-
-### Background Task Best Practices
-
-- **Always specify descriptive `description` parameters** for task tracking. Clear descriptions make it easier to identify tasks in `background_list` output.
-- **Use `background_wait` instead of polling loops.** If you need a result before proceeding, block with `background_wait` rather than spamming `background_list`/`background_output`.
-- **Use `background_stream` for progress monitoring.** For long tasks, stream output periodically instead of polling status.
-- **Clean up completed tasks** with `background_cancel` to free resources and keep the task list manageable.
-- **Prefer parallel task launches over sequential** when dependencies allow. Parallel execution significantly reduces total completion time.
-- **Include timeout parameters** for tasks that might hang to prevent indefinite execution.
-- **Respond to user messages while tasks run.** If the user sends a message while you're waiting on tasks, answer them immediately. Do not block on background tasks.
-
-### Session Management Note
-
-Background tasks run in their own session context. The `parent_session` field in task results refers to the session that launched the task, while the `session` field refers to the task's own execution session. This isolation ensures that task state does not interfere with the parent session's context.
+- **Always specify descriptive `description` parameters** for task tracking
+- **Prefer parallel task launches over sequential** when dependencies allow. Parallel execution significantly reduces total completion time
+- **Include timeout parameters** for tasks that might hang to prevent indefinite execution
+- **Respond to user messages while tasks run.** If the user sends a message while you're waiting on tasks, answer them immediately
 
 ## Skill Triggers
 
@@ -137,70 +81,41 @@ Background tasks run in their own session context. The `parent_session` field in
 | `commit` | Creating git commits (ensures consistent style) |
 | `opencode-acp` | Controlling another OpenCode instance via ACP protocol |
 
-## Task Scoping for Background Tasks
+## Task Scoping for Subagent Tasks
 
-**Rules for decomposing work into background tasks:**
+**Rules for decomposing work into subagent tasks:**
 
 1. **Max 3 files per task.** If a task needs to create/modify >3 files, split it into multiple tasks.
 2. **Max ~200 LOC per task.** If a single file needs >200 lines, consider if it can be split or if the coder prompt should include the full content inline (not via file reads).
 3. **One responsibility per task.** "Create types.ts" is good. "Create all lib files" is bad — it creates a mega-task that will run for 20+ minutes and likely fail.
-4. **Embed source in prompts.** Background tasks cannot reliably read large source files. If a coder needs reference material, embed it directly in the prompt text. Do NOT tell the coder to "read file X" — it may fail.
-5. **Verify task output immediately.** After a task completes, check the result. If it says `(No text output)` or the wrong files were created, steer the task before giving up on it.
+4. **Embed source in prompts.** Subagent tasks cannot reliably read large source files. If a coder needs reference material, embed it directly in the prompt text. Do NOT tell the coder to "read file X" — it may fail.
+5. **Verify task output immediately.** After a task completes, check the result. If it says `(No text output)` or the wrong files were created, relaunch the task with corrections before giving up on it.
 
-### Steering Ladder (Failed Task Recovery)
+### Failed Task Recovery
 
-When a background task fails or produces wrong output, follow this escalation path:
+When a subagent task fails or produces wrong output:
 
-```
-1. STEER the existing task with background_input(type='steer')
-   → Corrects the task without losing context
-   
-2. If steering fails (task already cleaned up), RE-LAUNCH with corrected prompt
-   → New task with lessons learned embedded
-   
-3. Only after BOTH steer and re-launch fail, do the work yourself
-   → Explain to user WHY you're doing it directly
-```
-
-**NEVER skip to step 3.** Steps 1 and 2 are mandatory. Doing work directly is the last resort, not the first instinct.
+1. **Relaunch with corrected prompt** — Include lessons learned and clearer instructions
+2. **Only after relaunch fails**, do the work yourself — Explain to user WHY you're doing it directly
 
 ## What NOT to Do
 
-- **NEVER call `task` or `delegate` — always use `background_task` instead**
 - **NEVER declare done without `advisor-gate` APPROVE — no exceptions**
-- **NEVER use `background_task` when acting as advisor.** Background tasks are for executors only.
-- **NEVER use `task` or `background_task` inside a background task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Background task prompts must be fully self-contained.
+- **NEVER use `task` when acting as advisor.** Subagent tasks are for executors only.
+- **NEVER use `task` inside a subagent task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Subagent prompts must be fully self-contained.
 - **NEVER use `question` tool in subagents.** Subagents must not ask questions — they should make decisions and do the work. The executor handles all user-facing questions.
-- **NEVER do implementation work directly when a coder fails.** Always steer first (`background_input(type='steer')`). Only do the work yourself after the SAME task has been steered AND re-launched and still fails — and even then, explain why to the user.
+- **NEVER do implementation work directly when a coder fails.** Always relaunch with corrected prompt first. Only do the work yourself after relaunch fails — and even then, explain why to the user.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not end the conversation — use `question` tool to keep going
 - Do not run self-review in place of advisor escalation
 - Do not use `bash` for long-running/interactive commands — use `pty_spawn` and friends
-- Do not poll `background_output` — wait for `<system-reminder>` notification
 
-## Background Task Steering
+## Subagent Task Auto-Preamble
 
-Background tasks support three interaction modes via `background_input`:
-
-| Type | Use when | Behavior |
-|------|----------|----------|
-| `steer` (default) | Running task: inject guidance; Completed task: reactivate with new prompt | Message prefixed with `[STEERING MESSAGE FROM ORCHESTRATOR]` |
-| `interrupt` | Task needs to be killed immediately | Calls `session.abort()`, sets status to `interrupt` |
-| `input` | Raw text input (backward compatible) | Injects text into running session |
-
-### Reactivation
-Completed tasks can be reactivated by sending a `steer` message. This:
-- Sends a new prompt to the existing session (multi-turn conversation)
-- Resets all state (status, polls, progress)
-- Acquires concurrency slot
-- Restarts polling
-- Session is kept alive for 5 minutes after completion for reactivation window
-
-### Auto-Preamble
-Every background task automatically gets a preamble prepended: `[BACKGROUND TASK RULES — MANDATORY]` telling the agent:
+Every subagent task automatically gets a preamble prepended: `[SUBAGENT TASK RULES — MANDATORY]` telling the agent:
 - Never call `question` or tools that wait for user input
-- Never call `task`, `delegate`, or `background_*` tools
+- Never call `task` or `delegate` tools — they are blocked in child sessions
 - Make decisions autonomously
 - Return final result in last message
 

@@ -136,7 +136,7 @@ export function buildNotificationText({ task, duration, statusText, allComplete,
     if (succeeded.length) lines.push(...succeeded.map((t: any) => `[OK] ${t.id}: ${t.description}`))
     if (failed.length) lines.push(...failed.map((t: any) => `[FAIL] ${t.id}: ${t.description} [${t.status}]`))
     if (!lines.length) lines.push(`${task.id}: ${desc} [${task.status}]`)
-    return `<system-reminder>\n[ALL DONE]\n${lines.join('\n')}${artifactPath ? `\nArtifact: ${artifactPath}` : ''}\n-> Call background_output(task_id) to read results. Check STATUS field — if "stuck" or "partial", steer with background_input(type="steer").\n</system-reminder>`
+    return `<system-reminder>\n[ALL DONE]\n${lines.join('\n')}${artifactPath ? `\nArtifact: ${artifactPath}` : ''}\n-> Task completed. Result is available in the task response above.\n</system-reminder>`
   }
 
   let failureContext = ''
@@ -151,9 +151,9 @@ export function buildNotificationText({ task, duration, statusText, allComplete,
   }
 
   const steerHint = (task.status === 'completed')
-    ? `\n-> Call background_output("${task.id}") to read result. If STATUS is "stuck" or "partial", steer with background_input(type="steer").`
+    ? `\n-> Task completed. Result is available in the response above.`
     : (task.status === 'error' || task.status === 'interrupt')
-    ? `\n-> Task failed. Call background_output("${task.id}") for details. Steer or re-launch.`
+    ? `\n-> Task failed. Check the error details in the response above. Relaunch with corrected prompt if needed.`
     : ''
 
   return `<system-reminder>\n[${statusText}] ${task.id}: ${desc} (${duration})${task.error ? ` — ${task.error}` : ''}${failureContext}${remainingCount > 0 ? ` — ${remainingCount} remaining` : ''}${steerHint}\n</system-reminder>`
@@ -178,7 +178,7 @@ export function isTaskStuck(task: any): boolean {
 }
 
 export function formatTaskList(tasks: any[], sessionID: string, options: any = {}): string {
-  if (!tasks.length) return `No background tasks for ${sessionID}.`
+  if (!tasks.length) return `No subagent tasks for ${sessionID}.`
 
   const groups = {
     running: tasks.filter((t: any) => t.status === 'running'),
@@ -205,7 +205,7 @@ export function formatTaskList(tasks: any[], sessionID: string, options: any = {
   if (totalCancelled > 0) headerParts.push(`${totalCancelled} cancelled`)
 
   const lines: string[] = []
-  lines.push(`Background tasks for ${sessionID} — ${tasks.length} total${headerParts.length ? ` (${headerParts.join(', ')})` : ''}`)
+  lines.push(`Subagent tasks for ${sessionID} — ${tasks.length} total${headerParts.length ? ` (${headerParts.join(', ')})` : ''}`)
   lines.push('')
 
   const formatTask = (task: any, isCompact = false) => {

@@ -103,7 +103,7 @@ T2 ──▶ T4 (if applicable)
 
 ### Parallelization Rules
 
-- Tasks with **no dependency edges** can run simultaneously via `background_task`
+- Tasks with **no dependency edges** can run simultaneously via the `task` tool
 - Tasks touching **disjoint file sets** can run simultaneously
 - Tasks touching **overlapping files** MUST run sequentially to avoid conflicts
 - The owner/agent column indicates which agent type should handle each task (e.g., `coder`, `advisor`, `explore`)

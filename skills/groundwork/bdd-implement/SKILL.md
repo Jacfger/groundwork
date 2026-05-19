@@ -35,7 +35,7 @@ Before implementing, decompose work into a **task dependency graph** for maximum
 4. **Identify critical path** — longest chain that determines total time
 5. **Flag resource conflicts** — tasks touching the same file/service must serialize despite parallel eligibility
 
-Execute waves in order; **within a wave, launch ALL tasks in parallel via `background_task` with `agent: "coder"`**. Do not serialize tasks that can run concurrently — this is a hard requirement, not a suggestion.
+Execute waves in order; **within a wave, launch ALL tasks in parallel via the builtin `task` tool with `agent: "coder"`**. Do not serialize tasks that can run concurrently — this is a hard requirement, not a suggestion.
 
 ## Parallel Coder Delegation
 
@@ -43,12 +43,12 @@ When launching a wave, send all wave tasks to `coder` agents simultaneously:
 
 ```
 # Good: parallel launch of Wave 0
-background_task(description="Implement auth endpoint", prompt="...", agent="coder")
-background_task(description="Add database schema", prompt="...", agent="coder")
-background_task(description="Write integration tests", prompt="...", agent="coder")
+task(description="Implement auth endpoint", prompt="...", agent="coder")
+task(description="Add database schema", prompt="...", agent="coder")
+task(description="Write integration tests", prompt="...", agent="coder")
 
 # Bad: sequential delegation — never do this
-background_task(...) → wait → background_task(...) → wait → ...
+task(...) → wait → task(...) → wait → ...
 ```
 
 Each `coder` prompt must be **fully self-contained**: include file paths, requirements, acceptance criteria, and any context the coder needs. The coder has no shared context with you.
@@ -63,11 +63,11 @@ Each `coder` prompt must be **fully self-contained**: include file paths, requir
 
 ### 2. Build Task Graph & Launch Wave 0
 
-Decompose work (see Task Graph above). Launch all Wave 0 tasks to `coder` agents in parallel via `background_task`. Do not begin Wave 1 until all Wave 0 tasks complete.
+Decompose work (see Task Graph above). Launch all Wave 0 tasks to `coder` agents in parallel via `task`. Do not begin Wave 1 until all Wave 0 tasks complete.
 
 ### 3. Execute Remaining Waves
 
-After each wave completes (all `background_output` retrieved), launch the next wave in parallel. Update `todowrite` state after each wave.
+After each wave completes (all task results retrieved), launch the next wave in parallel. Update `todowrite` state after each wave.
 
 ### 4. Capture After State
 
