@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
+import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { PluginInput } from '@opencode-ai/plugin'
 
@@ -9,7 +10,7 @@ import { LoopMonitor } from './lib/loop-monitor.js'
 
 export { resolvePromptAppend } from './lib/prompt-resolver.js'
 
-import { getBootstrapContent } from './lib/skills.js'
+import { getBootstrapContent, extractAndStripFrontmatter } from './lib/skills.js'
 import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from './lib/handoff.js'
 
 import { createBackgroundTaskTool } from './tools/background-task.js'
@@ -27,6 +28,7 @@ import type { ToolDeps } from './tools/deps.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const groundworkSkillsDir = path.resolve(__dirname, '..', 'skills', 'groundwork')
+const groundworkAgentsDir = path.resolve(__dirname, '..', 'agents')
 
 const handoffProcessedSessions = new Set<string>()
 
@@ -50,6 +52,26 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       config.command['handoff'] = {
         description: 'Create a focused handoff prompt for a new session',
         template: HANDOFF_COMMAND,
+      }
+
+      config.agent = config.agent || {}
+      if (existsSync(groundworkAgentsDir)) {
+        for (const file of readdirSync(groundworkAgentsDir)) {
+          if (!file.endsWith('.md')) continue
+          const agentName = path.basename(file, '.md')
+          const agentPath = path.join(groundworkAgentsDir, file)
+          const raw = readFileSync(agentPath, 'utf8')
+          const { frontmatter, content } = extractAndStripFrontmatter(raw)
+          const name = frontmatter.name || agentName
+          if (config.agent[name]?.disable) continue
+          config.agent[name] = config.agent[name] || {}
+          if (frontmatter.description && !config.agent[name].description) {
+            config.agent[name].description = frontmatter.description
+          }
+          if (!config.agent[name].prompt) {
+            config.agent[name].prompt = content.trim()
+          }
+        }
       }
       try {
         const gitignorePath = path.join(directory, '.gitignore')
