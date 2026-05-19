@@ -1,23 +1,17 @@
-// ─── Groundwork Plugin — Entry Point ────────────────────────────────────────
-// Wires all extracted modules into the plugin export.
-// This is the single entry point for tsdown bundling.
-
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import type { PluginInput } from '@opencode-ai/plugin'
 
-// Singletons — shared across all tools
 import { manager } from './lib/singletons.js'
 import { persistence } from './lib/singletons.js'
+import { LoopMonitor } from './lib/loop-monitor.js'
 
-// Re-export resolvePromptAppend for external consumers (e.g., oh-my-opencode)
 export { resolvePromptAppend } from './lib/prompt-resolver.js'
 
-// Helpers used directly in the entry point
 import { getBootstrapContent } from './lib/skills.js'
 import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from './lib/handoff.js'
 
-// Tool factories
 import { createBackgroundTaskTool } from './tools/background-task.js'
 import { createBackgroundWaitTool } from './tools/background-wait.js'
 import { createBackgroundOutputTool } from './tools/background-output.js'
@@ -27,9 +21,8 @@ import { createBackgroundInputTool } from './tools/background-input.js'
 import { createBackgroundStatusTool } from './tools/background-status.js'
 import { createBackgroundStreamTool } from './tools/background-stream.js'
 import { createHandoffSessionTool } from './tools/handoff-session.js'
-import { createReadSessionTool } from './tools/read-session.js'
-import { createRobustReadTool } from './tools/robust-read.js'
-import { createRobustWriteTool } from './tools/robust-write.js'
+// import { createReadSessionTool } from './tools/read-session.js'
+// import { createRobustReadTool } from './tools/robust-read.js'
 import type { ToolDeps } from './tools/deps.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -37,14 +30,13 @@ const groundworkSkillsDir = path.resolve(__dirname, '..', 'skills', 'groundwork'
 
 const handoffProcessedSessions = new Set<string>()
 
-// ─── Plugin Export ──────────────────────────────────────────────────────────
+export const GroundworkPlugin = async (input: PluginInput) => {
+  const { client, directory } = input
 
-export const GroundworkPlugin = async ({ client, directory }: { client: any; directory: string }) => {
-  // Initialize singletons
   manager.client = client
   manager.directory = directory
 
-  // Shared tool deps
+  const loopMonitor = new LoopMonitor(client, { enabled: true })
   const deps: ToolDeps = { client, directory }
 
   return {
@@ -91,12 +83,12 @@ export const GroundworkPlugin = async ({ client, directory }: { client: any; dir
       background_status: createBackgroundStatusTool(deps),
       background_stream: createBackgroundStreamTool(deps),
       handoff_session: createHandoffSessionTool(deps),
-      read_session: createReadSessionTool(deps),
-      read: createRobustReadTool(deps),
-      write: createRobustWriteTool(deps),
+//      read_session: createReadSessionTool(deps),
+//      read: createRobustReadTool(deps),
     },
 
     event: async ({ event }: { event: any }) => {
+      loopMonitor.handleEvent(event)
       manager.handleEvent(event)
       if (event.type === 'session.deleted') {
         const id = event.properties?.info?.id
@@ -129,10 +121,13 @@ export const GroundworkPlugin = async ({ client, directory }: { client: any; dir
       })
     },
 
-    'experimental.session.compacting': async ({ sessionID }: { sessionID: string }) => {
+    'experimental.session.compacting': async ({ sessionID }: { sessionID: string }, output: { context: string[]; prompt?: string }) => {
       try {
-        return manager.compactionContext(sessionID)
-      } catch { return null }
+        const ctx = manager.compactionContext(sessionID)
+        if (ctx) {
+          output.context.push(JSON.stringify(ctx))
+        }
+      } catch {}
     },
   }
 }
