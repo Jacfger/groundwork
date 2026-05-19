@@ -16,10 +16,10 @@ This skill is injected at conversation start. If you notice the core rules, rout
 1. **Always use `question` tool** instead of ending the conversation. Never leave the user without a next step.
 2. **ALWAYS use the builtin `task` tool for ALL subagent work.** For ALL subagent work — exploration, coding, research, parallel tasks, AND advisor — use `task` with `agent` parameter. Then wait for the result directly.
     - **Advisor**: Use `task(agent="advisor", description="...", prompt="...")` and wait for the response directly.
-3. **No worktrees.** For new work, continue in the same session OR offer `/handoff` via `session-continue` skill. User chooses.
+3. **No worktrees.** For new work, continue in the same session OR use `/handoff`. User chooses.
 4. **Never commit PRDs** to git. Spec docs live in `docs/prds/` but are never staged.
 5. **Always use `create-prd`** before implementation of non-trivial features (≥1 day). Never start coding a feature without an approved master PRD.
-6. **Steer before nesting.** Small direction changes update the master PRD via Steer Log (see `create-prd`). Only invoke `nested-prd` for architectural pivots or scope increases >1 day.
+6. **Steer via interview.** Small direction changes update the master PRD via Steer Log (see `create-prd`). Significant architectural pivots get re-interviewed and the PRD rewritten.
 7. **`advisor-gate` is MANDATORY before declaring done.** You NEVER declare a task complete without first invoking the `advisor-gate` completion gate and receiving APPROVE. No exceptions. Confidence without verification is an anti-pattern.
 8. **No self-review.** Use the **advisor** agent via `task(agent="advisor", ...)` for any technical uncertainty, not internal reasoning loops.
 9. **BDD over unit tests, validation over verification.** For any visible UI change or bug, validate with actual visual inspection (XCUITest, Playwright) before and after — not just code assertions. For non-UI work, prefer integration or end-to-end tests that validate behavior over unit tests that verify implementation.
@@ -74,30 +74,84 @@ When a task fails:
 
 ## Issue-Type Routing
 
-**Before starting any task, classify the issue type and follow the corresponding path:**
+**Before starting any task, classify the issue type and scope, then follow the corresponding path.** Classification is based on three dimensions: **type** (what), **scope** (how much), and **specificity** (how clear the requirements are).
+
+### Trivial (fully specified, <1h, ≤2 files)
+```
+implement directly → advisor-gate
+```
+- The user's message contains everything needed — no ambiguity, no exploration required
+- Examples: fix a typo, add a prop, rename a variable, update a dependency, change a color value
+- **Skip**: interview, bdd-implement, PRD — all overhead here
+- **Criteria**: you can describe the complete solution in ≤3 sentences before starting
 
 ### Bug (something is broken)
+
+**Trivial bug** (obvious cause, ≤1 file fix):
 ```
-interview (optional scoping) → diagnose → advisor-gate
+diagnose (abbreviated: Phase 1+2+5+6) → advisor-gate
 ```
-- NO PRD needed — bugs go directly to the `diagnose` loop
-- `diagnose` owns the fix AND the regression test
+- Skip Phase 3 (hypothesise) and Phase 4 (instrument) — cause is already known
+- Write regression test, apply fix, verify
+
+**Standard bug** (cause unclear, needs investigation):
+```
+diagnose (full 6-phase loop) → advisor-gate
+```
+- NO PRD needed — `diagnose` owns the fix AND the regression test
 - Do NOT invoke `bdd-implement` for bugs — `diagnose` is the complete bug path
 
-### Small Change (<1 day, non-architectural)
+**Complex bug** (multi-system, unclear boundaries, might be a design issue):
 ```
-interview → bdd-implement → advisor-gate
+interview (scoping) → diagnose → advisor-gate
+```
+- Interview resolves scope before debugging begins
+- If the bug reveals an architectural issue, note it in the post-mortem
+
+### Small Change (<1 day, non-architectural)
+
+**Trivial small change** (fully specified by user, <1h):
+```
+implement directly → advisor-gate
+```
+- Same as the Trivial path above — no ceremony needed
+
+**Standard small change** (needs some exploration or design):
+```
+interview (quick: 3-4 questions) → bdd-implement (decompose into 2-3 parallel tasks) → advisor-gate
 ```
 - Interview output IS the spec — no file artifact needed
+- Quick interview: cover only the unclear aspects, skip what's obvious
 - If during implementation estimated work exceeds 1 day → stop, escalate to `create-prd`
 
 ### Feature (≥1 day, or architectural)
 ```
-interview → create-prd → bdd-implement → advisor-gate
+interview (full: 8-10 questions) → create-prd → bdd-implement (full task graph + waves) → advisor-gate
 ```
 - Interviewing is mandatory before PRD creation
 - PRD is created from interview output, not from a blank slate
-- Full Task Graph and wave-based parallelism apply
+- Full Task Graph with dependency analysis, wave assignment, critical path, and resource conflict detection
+
+### Spike / Design Exploration
+```
+prototype → feed findings into next skill
+```
+- When the approach is uncertain and needs validation before committing
+- Prototype findings inform interview or PRD
+
+### Refactor
+```
+If <1d: small change path (interview → bdd-implement → advisor-gate)
+If ≥1d: feature path (interview → create-prd → bdd-implement → advisor-gate)
+```
+- Refactoring follows the same paths — scope determines the branch
+
+### Docs-Only Change
+```
+implement directly → advisor-gate
+```
+- README updates, comment fixes, documentation changes
+- No testing needed beyond visual review
 
 ## Skill Triggers
 
@@ -108,12 +162,7 @@ interview → create-prd → bdd-implement → advisor-gate
 | `advisor-gate` | **MANDATORY at every task completion.** Also: any technical decision with uncertainty, architectural trade-off, or high-risk operation — even 1% chance of impact |
 | `bdd-implement` | **After PRD approval (features) or interview (small changes).** NOT for bugs — use `diagnose` instead. Always delegate to parallel `coder` agents |
 | `create-prd` | After `interview` for features (≥1 day); no master PRD exists; about to implement non-trivial work |
-| `to-issues` | **After PRD approval.** Breaking work into vertical-slice issues before implementation. Tracer bullets through all layers |
-| `triage` | **Incoming work needs routing.** New issues, backlog management, classifying bugs vs enhancements, writing agent briefs |
 | `prototype` | **Design exploration.** Spike on uncertain approaches, test state models (logic TUI), explore UI layouts (variant switcher). Throwaway |
-| `nested-prd` | Master plan needs significant change during implementation; scope creep detected; architectural pivot |
-| `consolidate-docs` | Cleaning up PRDs after iterations; preparing for handoff or release |
-| `session-continue` | Context window growing long; user wants fresh session; losing track of earlier context |
 | `commit` | Creating git commits (ensures consistent style) |
 | `opencode-acp` | Controlling another OpenCode instance via ACP protocol |
 
@@ -161,28 +210,40 @@ This is the **soft prevention** layer. The **hard deny** layer in `opencode.json
 
 ```
 digraph flow {
-  "User message" -> "Classify: bug, small change, or feature?";
-  "Classify: bug, small change, or feature?" -> "Bug path" [label="bug"];
-  "Classify: bug, small change, or feature?" -> "Small change path" [label="<1 day"];
-  "Classify: bug, small change, or feature?" -> "Feature path" [label="≥1 day"];
+  "User message" -> "Classify: type + scope + specificity";
+  "Classify: type + scope + specificity" -> "Trivial" [label="fully specified, <1h"];
+  "Classify: type + scope + specificity" -> "Bug path" [label="something broken"];
+  "Classify: type + scope + specificity" -> "Small change path" [label="<1 day"];
+  "Classify: type + scope + specificity" -> "Feature path" [label="≥1 day"];
+  "Classify: type + scope + specificity" -> "Spike" [label="uncertain approach"];
 
-  "Bug path" -> "interview (optional)";
-  "interview (optional)" -> "diagnose";
-  "diagnose" -> "advisor-gate";
+  "Trivial" -> "implement directly";
+  "implement directly" -> "advisor-gate";
 
-  "Small change path" -> "interview";
-  "interview" -> "bdd-implement" [label="interview IS the spec"];
-  "bdd-implement" -> "advisor-gate";
+  "Bug path" -> "Trivial bug" [label="obvious cause"];
+  "Bug path" -> "Standard bug" [label="needs investigation"];
+  "Bug path" -> "Complex bug" [label="multi-system"];
+  "Trivial bug" -> "diagnose (abbreviated)";
+  "Standard bug" -> "diagnose (full)";
+  "Complex bug" -> "interview (scoping)";
+  "interview (scoping)" -> "diagnose (full)";
+  "diagnose (abbreviated)" -> "advisor-gate";
+  "diagnose (full)" -> "advisor-gate";
 
-  "Feature path" -> "interview";
-  "interview" -> "create-prd";
-  "create-prd" -> "to-issues (optional)";
-  "to-issues (optional)" -> "bdd-implement";
-  "create-prd" -> "bdd-implement";
-  "bdd-implement" -> "advisor-gate";
+  "Small change path" -> "Trivial SC" [label="fully specified"];
+  "Small change path" -> "Standard SC" [label="needs design"];
+  "Trivial SC" -> "implement directly";
+  "Standard SC" -> "interview (quick: 3-4 Q)";
+  "interview (quick: 3-4 Q)" -> "bdd-implement (2-3 parallel tasks)";
+  "bdd-implement (2-3 parallel tasks)" -> "advisor-gate";
 
-  "prototype" -> "interview | create-prd | bdd-implement" [label="finding feeds next"];
-  "triage" -> "diagnose | interview" [label="routes work"];
+  "Feature path" -> "interview (full: 8-10 Q)";
+  "interview (full: 8-10 Q)" -> "create-prd";
+  "create-prd" -> "bdd-implement (full task graph + waves)";
+  "bdd-implement (full task graph + waves)" -> "advisor-gate";
+
+  "Spike" -> "prototype";
+  "prototype" -> "interview | create-prd | bdd-implement" [label="findings feed next"];
 
   "advisor-gate" -> "Get APPROVE";
   "Get APPROVE" -> "Use question tool to present result";

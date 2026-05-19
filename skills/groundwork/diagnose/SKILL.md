@@ -63,6 +63,14 @@ Each hypothesis must be **falsifiable**: "If <X> is the cause, then <changing Y>
 
 **Show the ranked list to the user before testing.** User often has domain knowledge to re-rank instantly.
 
+**Parallel hypothesis testing:** Launch the top 2-3 hypotheses as **parallel exploration tasks** when they probe different parts of the system:
+```
+# Good: parallel probes of independent hypotheses
+task(description="Test hypothesis A: auth middleware", prompt="Check if the auth middleware strips the X-Token header when...", agent="explore")
+task(description="Test hypothesis B: race condition in cache", prompt="Check if the cache invalidation runs before the response...", agent="explore")
+```
+**Only parallelize when hypotheses are independent.** If Hypothesis B depends on Hypothesis A being wrong, test A first.
+
 ### Phase 4 — Instrument
 
 Each probe maps to a specific prediction from a hypothesis. **Change one variable at a time.**
@@ -82,6 +90,15 @@ Write regression test **before the fix** — at a correct seam (exercises the re
 
 If no correct seam exists, that itself is the finding — flag for architecture improvement and note in post-mortem.
 
+**Parallel execution:** Write the regression test AND the fix simultaneously:
+```
+# Write the failing test first, then apply the fix in the same task
+# The test and fix touch the same files, so they must be in the same task
+# But you CAN parallelize: fix implementation + feedback loop verification
+task(description="Write regression test + apply fix", prompt="...", agent="coder")
+task(description="Verify feedback loop passes after fix", prompt="...", agent="explore")  # runs after fix task
+```
+
 **Sequence:**
 1. Minimise reproduction → write failing test → watch it fail
 2. Apply fix → watch test pass
@@ -99,6 +116,14 @@ If no correct seam exists, that itself is the finding — flag for architecture 
 **Post-mortem question:** What would have prevented this bug?
 
 If answer involves architectural change (no good test seam, tangled callers, hidden coupling), note it for future architecture improvement work.
+
+## Abbreviated Mode
+
+For **trivial bugs** where the cause is obvious (≤1 file, obvious fix):
+
+Skip directly to: **Phase 1 (quick loop) → Phase 2 (reproduce) → Phase 5 (regression test + fix) → Phase 6 (cleanup)**
+
+Skip Phase 3 (hypothesise) and Phase 4 (instrument) — there's only one plausible cause and it's already identified.
 
 ## Completion Gate
 

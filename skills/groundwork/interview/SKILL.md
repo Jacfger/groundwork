@@ -14,9 +14,25 @@ Interviewing is separate from PRD creation. When embedded in PRD creation, the a
 ## When to Use
 
 - **Before `create-prd`** for any feature (≥1 day) — this is the mandatory interview phase
-- **Standalone for small changes** (<1 day) — interview output serves as the lightweight spec (no file artifact needed)
+- **Standalone for standard small changes** (<1 day) — interview output serves as the lightweight spec (no file artifact needed)
 - **Before `diagnose`** when the bug needs scoping before debugging begins
 - When user says "help me plan", "not sure about the approach", "let me think through this"
+
+**Do NOT use for:**
+- **Trivial tasks** (<1h, fully specified, ≤2 files) — skip straight to implementation
+- If the user's message contains everything needed, interview is pure overhead
+
+## Two Modes
+
+### Quick Interview (for small changes)
+- **3-4 questions max** — cover only the unclear aspects
+- Focus on: boundaries, edge cases, acceptance criteria
+- Skip: data model, architecture, error handling (unless relevant)
+
+### Full Interview (for features)
+- **8-10 questions** — cover all areas listed below
+- Systematic exploration of the design tree
+- Context updates (CONTEXT.md, ADRs) happen during full interviews
 
 ## Rules
 

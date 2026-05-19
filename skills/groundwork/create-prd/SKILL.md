@@ -1,6 +1,6 @@
 ---
 name: create-prd
-description: Create the master PRD for a feature with enforced filename conventions, standard content format, and session-level mutation tracking. Always the first PRD skill invoked — before nested-prd or consolidate-docs. After creation, MUST ask user for review before proceeding to implementation.
+description: Create the master PRD for a feature with enforced filename conventions, standard content format, and session-level mutation tracking. After creation, MUST ask user for review before proceeding to implementation.
 ---
 
 # Create PRD
@@ -15,7 +15,7 @@ Invoke when ANY of these are true:
 - No master PRD exists for the current feature area
 - `use-groundwork` core rules reference PRD creation
 
-**This is always the first PRD skill invoked.** `nested-prd` and `consolidate-docs` operate on PRDs created by this skill.
+**This is the only PRD skill.** It creates and maintains the master PRD throughout the feature lifecycle.
 
 ## Prerequisite
 
@@ -116,7 +116,7 @@ T2 ──▶ T4 (if applicable)
 
 ## Steer Log
 
-<Track direction changes discovered during implementation. Each entry preserves the rationale for pivots so consolidate-docs can produce accurate time-neutral output.>
+<Track direction changes discovered during implementation. Each entry preserves the rationale for pivots.>
 
 ### YYYY-MM-DD — <short description of pivot>
 
@@ -144,7 +144,7 @@ Change `status: draft` to `status: active` in frontmatter.
 
 ## Session-Level Mutation Tracking (Steer Log)
 
-When direction changes happen during implementation, update the master PRD **in place** using the Steer Log section. This is different from creating a child PRD.
+When direction changes happen during implementation, update the master PRD **in place** using the Steer Log section.
 
 ### When to Steer (update master directly)
 
@@ -155,41 +155,23 @@ When direction changes happen during implementation, update the master PRD **in 
 
 **How**: Add a Steer Log entry, update the affected sections, set `status: active`.
 
-### When to Nest (create child PRD via `nested-prd`)
+### When to Re-interview
 
 - Architectural pivot affecting ≥1 other feature
 - Scope increase >1 day
 - Contradiction with a requirement in the master PRD
 - Multiple plausible resolutions requiring user choice
 
-**How**: Invoke `nested-prd` skill. Do NOT update master directly.
+**How**: Re-run `interview` to explore the new direction, then rewrite the PRD sections that changed. Add a Steer Log entry documenting the pivot.
 
-### Decision Heuristic
+## File Naming
 
-```
-if (change affects other features OR scope increases >1 day OR architectural):
-    invoke nested-prd
-else:
-    steer (update master PRD directly + add Steer Log entry)
-```
-
-## File Naming Conventions
-
-All PRD-related skills follow these conventions. See `reference.md` for the full specification.
-
-| Type | Path pattern | Example |
-|------|-------------|---------|
-| Master PRD | `docs/prds/YYYY-MM-DD-<feature>/PRD.md` | `docs/prds/2026-04-17-auth-flow/PRD.md` |
-| Child PRD | `docs/prds/.../YYYY-MM-DD-<topic>/PRD.md` | `docs/prds/2026-04-17-auth-flow/2026-04-18-oauth-scope/PRD.md` |
-| Grandchild PRD | `docs/prds/.../YYYY-MM-DD-<topic>/PRD.md` | `docs/prds/2026-04-17-auth-flow/2026-04-18-oauth-scope/2026-04-19-token-refresh/PRD.md` |
-| Consolidated | `docs/prds/<feature>-current.md` | `docs/prds/auth-flow-current.md` |
-| Archive | `docs/prds/archive/YYYY-MM-DD-<feature>/PRD.md` | `docs/prds/archive/2026-04-17-auth-flow/PRD.md` |
+Master PRD path: `docs/prds/YYYY-MM-DD-<feature>/PRD.md`
 
 ## Rules
 
 - Master PRDs are never committed to git
 - Master PRD always lives in its own directory: `docs/prds/YYYY-MM-DD-<feature>/PRD.md`
-- Child PRDs nest inside their parent directory (see `nested-prd` skill)
 - Frontmatter must include `type: master`, `feature_area`, `date`, `status`, `child_prds`
 - Every section from the template must be present (even if briefly filled)
 - Steer Log entries must reference which sections were updated

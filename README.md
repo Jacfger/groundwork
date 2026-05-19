@@ -43,12 +43,7 @@ Restart OpenCode. Skills auto-discover.
 | `create-prd` | After interviewing for features (≥1 day) |
 | `advisor-gate` | Before declaring done |
 | `bdd-implement` | After PRD approval (features) or interviewing (small changes) |
-| `to-issues` | After PRD approval — break into vertical-slice issues |
-| `triage` | Incoming work — classify, route, write agent briefs |
 | `prototype` | Design exploration — logic TUI or UI variants, throwaway |
-| `nested-prd` | Scope/architecture pivots |
-| `consolidate-docs` | Cleaning up PRDs |
-| `session-continue` | Context handoff |
 
 ## Rules
 
