@@ -18,10 +18,11 @@ description: BDD-first implementation skill. Validate behavior over implementati
 **MANDATORY** — invoke this skill in these cases:
 
 - Immediately after a PRD is approved, before any implementation begins
-- Any bug fix (UI or non-UI)
+- After `interview` for small changes (<1 day) — interview output is the spec
 - Any feature that changes observable behavior
-- Any time a fix could be "correct per code but wrong in practice"
 - When scoping implementation work into parallel execution waves
+
+**Do NOT use for bugs.** Bugs go through `diagnose` instead — it owns the fix and regression test. If a bug went through `diagnose`, do NOT also invoke `bdd-implement`.
 
 **You do not have a choice.** If a PRD has been approved and implementation is starting, this skill must be followed.
 

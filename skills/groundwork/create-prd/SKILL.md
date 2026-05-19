@@ -17,12 +17,17 @@ Invoke when ANY of these are true:
 
 **This is always the first PRD skill invoked.** `nested-prd` and `consolidate-docs` operate on PRDs created by this skill.
 
+## Prerequisite
+
+**Run `interview` first.** This skill synthesizes the interview output into a PRD. It does NOT interview — that happened during the `interview` skill. If no interviewing has occurred, invoke `interview` before proceeding.
+
 ## Principles
 
 1. The PRD is the **source of truth for current intent** — not just original intent.
 2. When direction changes mid-session, the PRD must reflect the new direction via the Steer Log.
 3. Filenames and content format are enforced, not optional.
 4. PRDs are never committed to git.
+5. **Durability over precision.** No file paths, line numbers, or code snippets in Implementation Decisions — they go stale. Describe interfaces, types, and behavioral contracts instead. Exception: prototype snippets encoding decisions more precisely than prose (state machines, schemas).
 
 ## Workflow
 

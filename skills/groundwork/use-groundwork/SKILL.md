@@ -7,6 +7,10 @@ description: Bootstrap skill for the groundwork workflow suite. Loaded at every 
 
 **IMPORTANT: This skill is ALREADY LOADED — do NOT invoke the skill tool to load it again.**
 
+## Bootstrap Integrity
+
+This skill is injected at conversation start. If you notice the core rules, routing, or skill triggers are missing from your context (e.g., after context compression), re-invoke this skill to reload the bootstrap content.
+
 ## Core Rules (Non-Negotiable)
 
 1. **Always use `question` tool** instead of ending the conversation. Never leave the user without a next step.
@@ -68,13 +72,45 @@ When a task fails:
 - **Include timeout parameters** for tasks that might hang to prevent indefinite execution
 - **Respond to user messages while tasks run.** If the user sends a message while you're waiting on tasks, answer them immediately
 
+## Issue-Type Routing
+
+**Before starting any task, classify the issue type and follow the corresponding path:**
+
+### Bug (something is broken)
+```
+interview (optional scoping) → diagnose → advisor-gate
+```
+- NO PRD needed — bugs go directly to the `diagnose` loop
+- `diagnose` owns the fix AND the regression test
+- Do NOT invoke `bdd-implement` for bugs — `diagnose` is the complete bug path
+
+### Small Change (<1 day, non-architectural)
+```
+interview → bdd-implement → advisor-gate
+```
+- Interview output IS the spec — no file artifact needed
+- If during implementation estimated work exceeds 1 day → stop, escalate to `create-prd`
+
+### Feature (≥1 day, or architectural)
+```
+interview → create-prd → bdd-implement → advisor-gate
+```
+- Interviewing is mandatory before PRD creation
+- PRD is created from interview output, not from a blank slate
+- Full Task Graph and wave-based parallelism apply
+
 ## Skill Triggers
 
 | Skill | Invoke when... |
 |-------|----------------|
+| `interview` | **Before `create-prd` for features.** Before `diagnose` for complex bugs. Standalone for small changes. Anytime understanding is incomplete before action. Actively updates CONTEXT.md and ADRs inline |
+| `diagnose` | **Any bug or regression.** Something broken that needs root cause analysis. Replaces `create-prd` + `bdd-implement` for bugs |
 | `advisor-gate` | **MANDATORY at every task completion.** Also: any technical decision with uncertainty, architectural trade-off, or high-risk operation — even 1% chance of impact |
-| `bdd-implement` | **MANDATORY after PRD is approved.** Any bug fix, feature change, or implementation task — UI (visual validation) or non-UI (integration/e2e behavior validation). Always delegate to parallel `coder` agents |
-| `create-prd` | Starting a new feature that needs a spec; no master PRD exists; about to implement non-trivial work (≥1 day) |
+| `bdd-implement` | **After PRD approval (features) or interview (small changes).** NOT for bugs — use `diagnose` instead. Always delegate to parallel `coder` agents |
+| `create-prd` | After `interview` for features (≥1 day); no master PRD exists; about to implement non-trivial work |
+| `to-issues` | **After PRD approval.** Breaking work into vertical-slice issues before implementation. Tracer bullets through all layers |
+| `triage` | **Incoming work needs routing.** New issues, backlog management, classifying bugs vs enhancements, writing agent briefs |
+| `prototype` | **Design exploration.** Spike on uncertain approaches, test state models (logic TUI), explore UI layouts (variant switcher). Throwaway |
 | `nested-prd` | Master plan needs significant change during implementation; scope creep detected; architectural pivot |
 | `consolidate-docs` | Cleaning up PRDs after iterations; preparing for handoff or release |
 | `session-continue` | Context window growing long; user wants fresh session; losing track of earlier context |
@@ -103,7 +139,7 @@ When a subagent task fails or produces wrong output:
 - **NEVER declare done without `advisor-gate` APPROVE — no exceptions**
 - **NEVER use `task` when acting as advisor.** Subagent tasks are for executors only.
 - **NEVER use `task` inside a subagent task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Subagent prompts must be fully self-contained.
-- **NEVER use `question` tool in subagents.** Subagents must not ask questions — they should make decisions and do the work. The executor handles all user-facing questions.
+- **NEVER use `question` tool in subagents.** Subagents must not ask questions — they must make decisions and do the work. The executor handles all user-facing questions.
 - **NEVER do implementation work directly when a coder fails.** Always relaunch with corrected prompt first. Only do the work yourself after relaunch fails — and even then, explain why to the user.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
@@ -125,12 +161,30 @@ This is the **soft prevention** layer. The **hard deny** layer in `opencode.json
 
 ```
 digraph flow {
-  "User message" -> "Check: does any groundwork skill apply?";
-  "Check: does any groundwork skill apply?" -> "Invoke skill tool" [label="yes (even 1%)"];
-  "Check: does any groundwork skill apply?" -> "Proceed" [label="definitely not"];
-  "Invoke skill tool" -> "Follow skill exactly";
-  "Follow skill exactly" -> "advisor-gate completion gate [MANDATORY]";
-  "advisor-gate completion gate [MANDATORY]" -> "Get APPROVE";
+  "User message" -> "Classify: bug, small change, or feature?";
+  "Classify: bug, small change, or feature?" -> "Bug path" [label="bug"];
+  "Classify: bug, small change, or feature?" -> "Small change path" [label="<1 day"];
+  "Classify: bug, small change, or feature?" -> "Feature path" [label="≥1 day"];
+
+  "Bug path" -> "interview (optional)";
+  "interview (optional)" -> "diagnose";
+  "diagnose" -> "advisor-gate";
+
+  "Small change path" -> "interview";
+  "interview" -> "bdd-implement" [label="interview IS the spec"];
+  "bdd-implement" -> "advisor-gate";
+
+  "Feature path" -> "interview";
+  "interview" -> "create-prd";
+  "create-prd" -> "to-issues (optional)";
+  "to-issues (optional)" -> "bdd-implement";
+  "create-prd" -> "bdd-implement";
+  "bdd-implement" -> "advisor-gate";
+
+  "prototype" -> "interview | create-prd | bdd-implement" [label="finding feeds next"];
+  "triage" -> "diagnose | interview" [label="routes work"];
+
+  "advisor-gate" -> "Get APPROVE";
   "Get APPROVE" -> "Use question tool to present result";
 }
 ```

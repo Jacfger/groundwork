@@ -37,21 +37,27 @@ Restart OpenCode. Skills auto-discover.
 
 | Skill | Trigger |
 |-------|---------|
-| `use-groundwork` | Every session start — core rules |
-| `create-prd` | Starting non-trivial features |
+| `use-groundwork` | Every session start — core rules, issue-type routing |
+| `interview` | Before PRD creation; standalone for small changes and bug scoping; updates CONTEXT.md + ADRs |
+| `diagnose` | Bugs and regressions — replaces PRD + BDD for bug path |
+| `create-prd` | After interviewing for features (≥1 day) |
 | `advisor-gate` | Before declaring done |
-| `bdd-implement` | After PRD approval |
+| `bdd-implement` | After PRD approval (features) or interviewing (small changes) |
+| `to-issues` | After PRD approval — break into vertical-slice issues |
+| `triage` | Incoming work — classify, route, write agent briefs |
+| `prototype` | Design exploration — logic TUI or UI variants, throwaway |
 | `nested-prd` | Scope/architecture pivots |
 | `consolidate-docs` | Cleaning up PRDs |
 | `session-continue` | Context handoff |
 
 ## Rules
 
-1. PRD-first for features ≥1 day
+1. Issue-type routing: bug → diagnose, small change → interview + bdd-implement, feature → interview + create-prd + bdd-implement
 2. Advisor gate before declaring done
 3. Background tasks for parallel work
 4. No PRD commits to git
 5. PTY tools for long-running commands
+6. Interview before PRD — understanding before synthesis
 
 ## Dev
 
