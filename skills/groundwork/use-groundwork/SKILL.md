@@ -92,14 +92,17 @@ RIGHT:  Read routing path → classify → invoke skill tool → follow skill's 
 
 **Exception:** Only the `Trivial` and `Docs-Only` paths skip skill invocation entirely. Every other path requires at least one skill load.
 
-### Trivial (fully specified, <1h, ≤2 files)
+**Anti-pattern — the trivial escape hatch:** Do NOT re-classify a feature or small change as "trivial" just because the user described it clearly. A clearly described feature is still a feature. A clearly described small change is still a small change. The trivial path is only for changes that modify ≤1 file, ≤10 lines, and add no new behavior.
+
+### Trivial (fully specified, <1h, ≤1 file, ≤10 lines)
 ```
-implement directly → advisor-gate
+implement directly → invoke skill "advisor-gate"
 ```
 - The user's message contains everything needed — no ambiguity, no exploration required
-- Examples: fix a typo, add a prop, rename a variable, update a dependency, change a color value
+- **Strict criteria — ALL must be true**: ≤1 file changed, ≤10 lines, no new behavior, no new dependencies
+- Examples: fix a typo, rename a variable, update a dependency version, change a color value
 - **Skip**: interview, bdd-implement, PRD — all overhead here
-- **Criteria**: you can describe the complete solution in ≤3 sentences before starting
+- **NOT trivial**: adding features, creating components, changing user-facing behavior — even if well-described
 
 ### Bug (something is broken)
 
@@ -126,16 +129,20 @@ invoke skill "interview" (scoping) → invoke skill "diagnose" → invoke skill 
 
 ### Small Change (<1 day, non-architectural)
 
-**Trivial small change** (fully specified by user, <1h):
+**Trivial small change** (strict criteria — ALL must be true):
 ```
-implement directly → advisor-gate
+implement directly → invoke skill "advisor-gate"
 ```
-- Same as the Trivial path above — no ceremony needed
+- **≤1 file changed**, **≤10 lines added/modified**, **no new behavior** (only adjusts existing behavior)
+- Examples: change a color, adjust padding, rename a prop, update a config value, fix a CSS rule
+- **NOT trivial** (even if well-described): adding a new feature, creating a new component, adding new user-facing behavior, touching >1 file, adding >10 lines
+- If it adds or changes user-facing behavior → it is a **standard small change**, use the path below
 
-**Standard small change** (needs some exploration or design):
+**Standard small change** (any small change that doesn't meet ALL trivial criteria):
 ```
 invoke skill "interview" (quick: 3-4 questions) → invoke skill "bdd-implement" (decompose into 2-3 parallel tasks) → invoke skill "advisor-gate"
 ```
+- This is the DEFAULT small-change path. Use it unless the change is truly single-file, ≤10 lines, no new behavior.
 - Interview output IS the spec — no file artifact needed
 - Quick interview: cover only the unclear aspects, skip what's obvious
 - If during implementation estimated work exceeds 1 day → stop, escalate to `create-prd`
@@ -165,7 +172,7 @@ If ≥1d: invoke skill "interview" → invoke skill "create-prd" → invoke skil
 
 ### Docs-Only Change
 ```
-implement directly → advisor-gate
+implement directly → invoke skill "advisor-gate"
 ```
 - README updates, comment fixes, documentation changes
 - No testing needed beyond visual review
