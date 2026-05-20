@@ -1,6 +1,6 @@
 ---
 name: create-prd
-description: Create the master PRD for a feature with enforced filename conventions, standard content format, and session-level mutation tracking. After creation, MUST ask user for review before proceeding to implementation.
+description: Create the master PRD for a feature with enforced filename conventions, modular content format, and session-level mutation tracking. After creation, MUST ask user for review before proceeding to implementation.
 ---
 
 # Create PRD
@@ -27,7 +27,8 @@ Invoke when ANY of these are true:
 2. When direction changes mid-session, the PRD must reflect the new direction via the Steer Log.
 3. Filenames and content format are enforced, not optional.
 4. PRDs are never committed to git.
-5. **Durability over precision.** No file paths, line numbers, or code snippets in Implementation Decisions — they go stale. Describe interfaces, types, and behavioral contracts instead. Exception: prototype snippets encoding decisions more precisely than prose (state machines, schemas).
+5. **Durability over precision.** No file paths, line numbers, or code snippets — they go stale. Describe interfaces, types, and behavioral contracts instead. Exception: prototype snippets encoding decisions more precisely than prose (state machines, schemas).
+6. **Modular sections.** Only include sections the feature actually needs. Don't create empty boilerplate.
 
 ## Workflow
 
@@ -39,7 +40,7 @@ Identify:
 
 ### Step 2: Create Master PRD Directory and File
 
-Each PRD (master or child) lives in its own directory containing a `PRD.md` file. Child PRDs nest as subdirectories within their parent.
+Each PRD lives in its own directory containing a `PRD.md` file.
 
 File path: `docs/prds/YYYY-MM-DD-<feature-area>/PRD.md`
 
@@ -47,9 +48,9 @@ File path: `docs/prds/YYYY-MM-DD-<feature-area>/PRD.md`
 mkdir -p docs/prds/YYYY-MM-DD-<feature-area>
 ```
 
-### Step 3: Write Content Using Master Template
+### Step 3: Write Content Using Modular Template
 
-Use this template exactly:
+Use this template. **Include mandatory sections always. Include optional sections only when the feature has meaningful content for them — skip sections that would be empty or boilerplate.**
 
 ```markdown
 ---
@@ -57,62 +58,47 @@ type: master
 feature_area: <kebab-case>
 date: YYYY-MM-DD
 status: draft
-child_prds: []
 ---
 
 # <Feature Area>
 
-## Overview
+## Overview (mandatory)
 
 <1-3 paragraph description of what this feature does and why it exists. Present tense: "This system provides..." not "We will build...">
 
-## Architecture
+## Acceptance Criteria (mandatory)
+
+1. <observable, testable criterion — what the system does when...>
+2. <criterion>
+3. <criterion>
+
+## Architecture (optional — include when feature has non-trivial structure)
 
 <How the feature is structured. Key components, data flow, boundaries. Diagrams if helpful.>
 
-## Data Model
+## Data Model (optional — include when feature introduces or changes entities)
 
 <Entities, fields, relationships. Schema definitions or type signatures.>
 
-## API / Interface
+## API / Interface (optional — include when feature exposes contracts)
 
 <Endpoints, functions, CLI commands, UI surfaces — whatever the external contract is.>
 
-## Error Handling
+## Error Handling (optional — include when feature has non-obvious failure modes)
 
 <How errors are classified and surfaced. Retry logic, fallbacks, user-facing messages.>
 
-## Known Limitations
+## Security Considerations (optional — include when feature touches auth, data access, or external input)
+
+<Auth, authorization, data protection, input validation.>
+
+## Known Limitations (optional — include when constraints exist)
 
 <What this feature does NOT do. Constraints, edge cases not covered, deferred work.>
 
-## Task Graph
+## Out of Scope (mandatory)
 
-<Define implementation tasks with IDs, dependencies, and ownership to enable parallel execution and avoid merge conflicts.>
-
-### Task List
-
-| ID | Task | Depends On | Owner / Agent | Files Touched | Est. |
-|----|------|-----------|---------------|---------------|------|
-| T1 | <first task> | — | <agent or role> | <file paths> | <1d> |
-| T2 | <second task> | T1 | <agent or role> | <file paths> | <0.5d> |
-| T3 | <parallel task> | — | <agent or role> | <file paths> | <1d> |
-
-### Dependency Graph
-
-```
-T1 ──▶ T2
-T3 (independent, can run in parallel with T1)
-T2 ──▶ T4 (if applicable)
-```
-
-### Parallelization Rules
-
-- Tasks with **no dependency edges** can run simultaneously via the `task` tool
-- Tasks touching **disjoint file sets** can run simultaneously
-- Tasks touching **overlapping files** MUST run sequentially to avoid conflicts
-- The owner/agent column indicates which agent type should handle each task (e.g., `coder`, `advisor`, `explore`)
-- When allocating parallel tasks, respect the dependency graph — never start a task before all its dependencies are complete
+- <explicitly not covered by this feature>
 
 ## Steer Log
 
@@ -172,8 +158,9 @@ Master PRD path: `docs/prds/YYYY-MM-DD-<feature>/PRD.md`
 
 - Master PRDs are never committed to git
 - Master PRD always lives in its own directory: `docs/prds/YYYY-MM-DD-<feature>/PRD.md`
-- Frontmatter must include `type: master`, `feature_area`, `date`, `status`, `child_prds`
-- Every section from the template must be present (even if briefly filled)
+- Frontmatter must include `type: master`, `feature_area`, `date`, `status`
+- Mandatory sections (Overview, Acceptance Criteria, Out of Scope) must always be present
+- Optional sections are included only when they have meaningful content — skip empty boilerplate
 - Steer Log entries must reference which sections were updated
 - After PRD creation, MUST ask user for review before proceeding to implementation
 - Only one master PRD per feature area at a time

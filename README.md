@@ -29,9 +29,7 @@ Restart OpenCode. Skills auto-discover.
 | `background_input` | Send steering/interrupt to running task |
 | `background_status` | Task health info |
 | `background_stream` | Partial output from running task |
-| `read` | Enhanced file read with retry+fallbacks |
 | `handoff_session` | Create focused continuation prompt |
-| `read_session` | Read prior session transcript |
 
 ## Skills
 

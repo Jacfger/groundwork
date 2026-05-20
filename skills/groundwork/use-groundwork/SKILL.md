@@ -126,11 +126,12 @@ interview (quick: 3-4 questions) → bdd-implement (decompose into 2-3 parallel 
 
 ### Feature (≥1 day, or architectural)
 ```
-interview (full: 8-10 questions) → create-prd → bdd-implement (full task graph + waves) → advisor-gate
+interview (full: 8-10 questions) → create-prd → bdd-implement (vertical-slice decomposition) → advisor-gate
 ```
 - Interviewing is mandatory before PRD creation
-- PRD is created from interview output, not from a blank slate
-- Full Task Graph with dependency analysis, wave assignment, critical path, and resource conflict detection
+- PRD is created from interview spec, not from a blank slate
+- bdd-implement decomposes into vertical tracer-bullet slices (not horizontal layers)
+- PRD uses modular template — only sections the feature needs
 
 ### Spike / Design Exploration
 ```
@@ -165,6 +166,42 @@ implement directly → advisor-gate
 | `prototype` | **Design exploration.** Spike on uncertain approaches, test state models (logic TUI), explore UI layouts (variant switcher). Throwaway |
 | `commit` | Creating git commits (ensures consistent style) |
 | `opencode-acp` | Controlling another OpenCode instance via ACP protocol |
+
+## Session Conventions
+
+### Session Goal
+
+When starting multi-wave implementation of a feature, pin the goal as the **first `todowrite` item**. Derived from the PRD's Acceptance Criteria or the interview spec's resolutions. This item stays at the top throughout implementation. After each wave, check: does remaining work still serve this goal?
+
+If the goal becomes unclear or outdated, re-derive it from the spec before continuing.
+
+### Learnings (docs/learnings.md)
+
+Capture non-obvious gotchas discovered during any work session. Lazy-created at project root. Append-only.
+
+**Add learnings when:**
+- Surprising framework behavior encountered
+- Non-obvious configuration required
+- Integration pitfall discovered
+- Test setup complexity that would trip up future sessions
+- Anything that made you say "I didn't expect that"
+
+**Format:**
+```markdown
+# Learnings
+
+- **<topic>**: <gotcha description — what happened, why it's surprising, what to do instead>
+```
+
+**Rules:**
+- Lazy creation — only create when there's genuinely non-obvious knowledge to capture
+- One bullet per gotcha — keep it scannable
+- Only genuinely surprising things — not routine findings
+- Never committed to git (lives alongside PRDs)
+
+### Domain Glossary (CONTEXT.md)
+
+See `interview` skill for CONTEXT.md format and rules. Created and maintained during interview sessions.
 
 ## Task Scoping for Subagent Tasks
 
@@ -239,8 +276,8 @@ digraph flow {
 
   "Feature path" -> "interview (full: 8-10 Q)";
   "interview (full: 8-10 Q)" -> "create-prd";
-  "create-prd" -> "bdd-implement (full task graph + waves)";
-  "bdd-implement (full task graph + waves)" -> "advisor-gate";
+  "create-prd" -> "bdd-implement (vertical slices)";
+  "bdd-implement (vertical slices)" -> "advisor-gate";
 
   "Spike" -> "prototype";
   "prototype" -> "interview | create-prd | bdd-implement" [label="findings feed next"];

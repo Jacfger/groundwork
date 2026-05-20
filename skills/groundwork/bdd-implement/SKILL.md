@@ -1,6 +1,6 @@
 ---
 name: bdd-implement
-description: BDD-first implementation skill. Validate behavior over implementation — visual inspection for UI, integration/e2e tests for non-UI. Build task graphs for parallel execution efficiency. MANDATORY after PRD approval.
+description: BDD-first implementation skill. Validate behavior over implementation — visual inspection for UI, integration/e2e tests for non-UI. Decompose into vertical tracer-bullet slices for parallel execution. MANDATORY after PRD approval.
 ---
 
 # BDD Implement
@@ -18,7 +18,7 @@ description: BDD-first implementation skill. Validate behavior over implementati
 **MANDATORY** — invoke this skill in these cases:
 
 - Immediately after a PRD is approved, before any implementation begins
-- After `interview` for standard small changes (<1 day) — interview output is the spec
+- After `interview` for standard small changes (<1 day) — interview spec is the spec
 - Any feature that changes observable behavior
 - When scoping implementation work into parallel execution waves
 
@@ -32,60 +32,86 @@ description: BDD-first implementation skill. Validate behavior over implementati
 
 ### Feature Mode (after PRD approval)
 
-Full Task Graph with dependency analysis, wave assignment, critical path, and resource conflict detection. This is the heavyweight path for ≥1 day features.
+Decompose into vertical tracer-bullet slices from the PRD's acceptance criteria. Each slice delivers a complete, testable user behavior cutting through all layers.
 
 ### Small-Change Mode (after interview for <1 day work)
 
-Lightweight decomposition into 2-3 parallel tasks. No formal Task Graph needed — just identify independent work units and launch them simultaneously.
+Lightweight decomposition into 2-3 vertical slices. No PRD needed — the interview spec is the spec.
 
-**Decision rule:** If a PRD exists with a Task Graph → Feature Mode. Otherwise → Small-Change Mode.
+**Decision rule:** If a PRD exists → Feature Mode. Otherwise → Small-Change Mode.
 
-## Task Graph (Feature Mode)
+## Vertical-Slice Decomposition
 
-Before implementing, decompose work into a **task dependency graph** for maximum parallelism:
+**The key insight:** each slice is a thin end-to-end tracer bullet through ALL layers for ONE user-facing behavior — not a horizontal layer.
 
-1. **List atomic tasks** — each with a clear "done" definition
-2. **Map dependencies** — hard ordering (A must finish before B) vs soft preferences
-3. **Assign waves** — Wave 0 has no predecessors; Wave k requires all predecessors in waves < k
-4. **Identify critical path** — longest chain that determines total time
-5. **Flag resource conflicts** — tasks touching the same file/service must serialize despite parallel eligibility
-6. **Maximize wave width** — if a wave has only 1 task, look harder for decomposition. Every wave should have ≥2 tasks unless the critical path genuinely has no parallelism.
-
-Execute waves in order; **within a wave, launch ALL tasks in parallel via the builtin `task` tool with `agent: "coder"`**. Do not serialize tasks that can run concurrently — this is a hard requirement, not a suggestion.
-
-## Small-Change Decomposition
-
-For work without a PRD Task Graph, decompose into independent parallel tasks:
-
-**Pattern:** Most small changes follow a 3-part structure:
-1. **Foundation** — types, constants, data structures, interfaces
-2. **Logic** — functions, composables, services, business rules
-3. **Surface** — components, UI, API endpoints, CLI output
-
-Tasks 1→2→3 are sequential. But within each layer, parallelize:
-- If foundation has types + constants → 2 parallel tasks
-- If surface has component A + component B → 2 parallel tasks
-
-**Mental model:**
+**Horizontal (wrong):**
 ```
-Wave 0: types.ts + constants.ts (parallel)
-Wave 1: composable.ts (depends on types)
-Wave 2: ComponentA.vue + ComponentB.vue (parallel, both depend on composable)
+Wave 0: all types + all constants
+Wave 1: all functions + all composables
+Wave 2: all components + all UI
+```
+This delays validation to the last wave. No user behavior is testable until everything is built.
+
+**Vertical (correct):**
+```
+Slice 1 (tracer): Add todo — Todo type → addTodo() → TodoInput.vue → e2e test
+Slice 2: Complete + delete — toggleTodo(), deleteTodo() → TodoItem.vue → e2e tests
+Slice 3: Filter + clear — filter, clearCompleted() → TodoFilter + TodoList → e2e tests
+```
+First slice proves the entire path works. Subsequent slices build on it.
+
+### Decomposition Process
+
+1. **Map acceptance criteria to slices.** Each criterion (or small group of related criteria) becomes one slice.
+2. **Identify the tracer bullet.** The first slice should prove the end-to-end path: data model → logic → surface → test.
+3. **Find parallelism.** Slices that don't depend on each other can run in parallel.
+4. **Assign waves.** Wave 0 = tracer. Wave k = slices whose prerequisites are in earlier waves.
+
+### Slice Template
+
+Each slice contains everything needed for one vertical behavior:
+
+```
+Slice N: <behavior name>
+  Types: <data structures needed>
+  Logic: <functions/composables/services>
+  Surface: <components/UI/API endpoints>
+  Test: <e2e or integration test validating the behavior>
+  Depends on: <slice IDs or "tracer">
 ```
 
-**Minimum decomposition:** Even a "simple" change should produce ≥2 parallel tasks. If you can't decompose, the change is probably trivial (use the Trivial path instead).
+### Wave Execution
+
+Within a wave, launch ALL slices in parallel via `task` with `agent: "coder"`:
+
+```
+# Wave 1: two independent slices
+task(description="Slice 2: Complete + delete todo", prompt="...", agent="coder")
+task(description="Slice 3: Filter + clear completed", prompt="...", agent="coder")
+```
+
+**Maximize wave width.** If a wave has only 1 slice, look harder for decomposition or combine it with an adjacent wave. Every wave should have ≥2 slices unless the critical path genuinely has no parallelism.
+
+### Small-Change Decomposition
+
+For work without a PRD, use the same vertical-slice approach but lighter:
+
+1. Identify 2-3 user-facing behaviors from the interview spec
+2. First behavior = tracer bullet (proves the path)
+3. Remaining behaviors = parallel slices after tracer
+
+**Minimum decomposition:** Even a "simple" change should produce ≥2 slices. If you can't decompose, the change is probably trivial (use the Trivial path instead).
 
 ## Parallel Coder Delegation
 
-When launching a wave, send all wave tasks to `coder` agents simultaneously:
+When launching a wave, send all wave slices to `coder` agents simultaneously:
 
 ```
-# Good: parallel launch of Wave 0
-task(description="Implement auth endpoint", prompt="...", agent="coder")
-task(description="Add database schema", prompt="...", agent="coder")
-task(description="Write integration tests", prompt="...", agent="coder")
+# Good: parallel launch
+task(description="Slice 2: Complete todo", prompt="...", agent="coder")
+task(description="Slice 3: Delete todo", prompt="...", agent="coder")
 
-# Bad: sequential delegation — never do this
+# Bad: sequential — never do this
 task(...) → wait → task(...) → wait → ...
 ```
 
@@ -93,33 +119,51 @@ Each `coder` prompt must be **fully self-contained**: include file paths, requir
 
 ## Workflow
 
-### 1. Capture Before State
+### 1. Decompose
+
+- **Feature Mode:** Map PRD acceptance criteria to vertical slices. Identify tracer bullet. Build wave plan.
+- **Small-Change Mode:** Identify 2-3 vertical behaviors from interview spec. First = tracer.
+
+Present the decomposition to the user via `question` tool before implementing.
+
+### 2. Pin Session Goal
+
+Set the first `todowrite` item to the feature goal derived from acceptance criteria. This item stays at the top throughout implementation. After each wave, verify remaining work still serves this goal.
+
+### 3. Capture Before State
 
 - **UI work:** `playwright_browser_snapshot` + `playwright_browser_take_screenshot` → `before-<description>.png`
 - **Non-UI work:** Run existing integration/e2e tests for baseline. Note what passes/fails.
 - **Skip if:** Non-UI work with no existing tests AND the change is purely additive (no risk of breaking existing behavior). Document why you skipped.
 
-### 2. Build Task Graph & Launch Wave 0
+### 4. Execute Waves
 
-- **Feature Mode:** Use the Task Graph from the PRD. Launch all Wave 0 tasks in parallel.
-- **Small-Change Mode:** Decompose into 2-3 tasks following the foundation→logic→surface pattern. Launch the first wave.
+Launch Wave 0 (tracer), wait for completion, verify, then launch Wave 1, etc. After each wave, update `todowrite` state.
 
-### 3. Execute Remaining Waves
+### 5. Capture After State
 
-After each wave completes (all task results retrieved), launch the next wave in parallel. Update `todowrite` state after each wave.
+Same tools as Step 3. Label: `after-<description>.png` or after-state test results.
 
-### 4. Capture After State
+### 6. Validate
 
-Same tools as Step 1. Label: `after-<description>.png` or after-state test results.
-
-### 5. Validate
-
-- **UI:** Side-by-side comparison — does visual output match requirement? Any unexpected changes? Accessibility tree correct?
-- **Non-UI:** Do integration/e2e tests pass? Does observed behavior match the requirement?
+- **UI:** Side-by-side comparison — does visual output match requirement? Any unexpected changes?
+- **Non-UI:** Do integration/e2e tests pass? Does observed behavior match the acceptance criteria?
 - **Both:** If unexpected changes — stop, diagnose, fix, re-validate.
 
-### 6. Completion Gate
+### 7. Capture Learnings
 
-Invoke `advisor-gate` with: before state, after state, what changed, what requirement is met.
+After validation, append any non-obvious gotchas discovered during implementation to `docs/learnings.md`:
+- Surprising framework behavior
+- Non-obvious configuration requirements
+- Integration pitfalls
+- Test setup complexity
+
+**Format:** `- **<topic>**: <gotcha description>`
+
+Lazy-create `docs/learnings.md` if it doesn't exist. Only add genuinely surprising, non-obvious things — not routine findings.
+
+### 8. Completion Gate
+
+Invoke `advisor-gate` with: before state, after state, what changed, which acceptance criteria are met.
 
 **Do not declare done without this gate. This step is non-negotiable.**

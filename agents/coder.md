@@ -51,6 +51,54 @@ If you catch yourself wanting to read "just one more file" to understand the cod
 
 The orchestrator will steer you if something is wrong. Reading more files is NOT the answer.
 
+## Vertical-Slice Awareness
+
+You may receive tasks that are vertical slices — thin end-to-end behaviors that touch multiple layers (types, logic, UI/components, tests). When implementing a vertical slice:
+
+1. Create/modify all files needed for the slice in one pass — types, logic, surface, test
+2. Ensure the slice is independently testable — it should deliver one complete user behavior
+3. If the slice depends on code from a previous slice, assume that code already exists
+4. Verify the slice compiles/builds after implementation
+
+## Build Verification (MANDATORY)
+
+After implementing changes, **always verify the build passes** before returning. This prevents orchestrator round-trips for trivial build errors.
+
+1. **Detect the build command:** Check for common markers:
+   - `package.json` with `"build"` script → `npm run build` or `bun run build`
+   - `Cargo.toml` → `cargo check`
+   - `go.mod` → `go build ./...`
+   - `Makefile` with `build` target → `make build`
+   - No build system → skip this step
+
+2. **Run the build command** and check for errors:
+   ```bash
+   npm run build 2>&1 | tail -20
+   ```
+
+3. **If build fails:** Fix the errors immediately. Common quick fixes:
+   - TypeScript: missing imports, type mismatches, unused variables
+   - Linting: formatting issues, unused declarations
+   - Fix within your read budget — don't re-read files you already read
+
+4. **If build fails after fix attempt:** Report the error in your output. Do NOT loop endlessly — return with:
+   ```
+   BUILD FAILED: <error summary>
+   Files created/modified: <list>
+   Error output: <last 10 lines>
+   ```
+
+5. **Report build status** in your output:
+   ```
+   CREATED: /path/to/file (N lines)
+   BUILD: PASS
+   ```
+
+**Exceptions:** Skip build verification ONLY if:
+- The task explicitly says "don't build" or "just create the file"
+- No build system is detected
+- The build requires external services (database, API keys) not available in the task context
+
 ## Guidelines
 - Prefer editing existing files over creating new ones
 - Never add comments unless the code is extremely hard to understand

@@ -1,9 +1,5 @@
 # Advisor Gate Reference
 
-## 1% Chance Escalation Rule
-
-If there is even a 1% chance the next decision is high-impact, ambiguous, or hard to reverse — invoke `advisor`. Prefer one early checkpoint over late-stage rework.
-
 ## Decision Escalation Template
 
 ```markdown
@@ -15,90 +11,9 @@ Options considered: <A/B and why unresolved>
 Decision needed: <single concrete question>
 ```
 
-## Completion Gate Template
+## Examples
 
-```markdown
-## Completion Gate Request
-Task: <what was asked>
-What was done: <summary of changes>
-Verification run: <commands run and their output>
-Requirements from spec/PRD: <list each requirement>
-Each requirement met: <yes/no per item>
-Anything uncertain or skipped: <list or "none">
-Question: Is this complete and correct?
-```
-
-## Advisor Response Template (Decision)
-
-```markdown
-Type: PLAN | CORRECTION | STOP
-Decision: <2-3 sentence bottom line recommendation>
-Rationale: <why, anchored to specific code at file:line>
-Actions:
-1. <concrete step>
-2. <concrete step>
-Risks to watch:
-- <specific risk with mitigation>
-Effort: Quick | Short | Medium | Large
-```
-
-## Advisor Response Template (Completion Gate)
-
-```markdown
-Type: APPROVE | GAPS | CORRECTION | STOP
-Decision: <2-3 sentence assessment>
-Rationale: <why, referencing specific requirements>
-Actions:
-1. <what to do next — empty if APPROVE>
-Risks to watch:
-- <unresolved risk or caveat>
-Effort: Quick | Short | Medium | Large
-```
-
-## Expanded Tier Template (for complex decisions)
-
-```markdown
-Why this approach:
-- <trade-off bullet 1>
-- <trade-off bullet 2>
-Escalation triggers:
-- <condition requiring more complex solution>
-Alternative sketch:
-- <high-level outline of a different path>
-```
-
-## Invocation Record (append per escalation)
-
-```markdown
-## Advisor Invocation Record
-Timestamp: <YYYY-MM-DD HH:MM:SS>
-Type: DECISION | COMPLETION_GATE
-Trigger: <why invoked>
-Decision requested: <question>
-Advisor result type: PLAN | CORRECTION | STOP | APPROVE | GAPS
-Effort estimate: Quick | Short | Medium | Large
-Executor follow-up: <next action taken>
-```
-
-## Proper Invocation Pattern
-
-The advisor must be invoked using the builtin `task` tool with `agent: "advisor"`:
-
-```
-# Trigger the advisor and wait for response
-[Tool: task]
-agent: "advisor"
-description: "Completion gate review"
-prompt: |
-  ## Completion Gate Request
-  Task: <what was asked>
-  What was done: <summary>
-  ...
-
-# The task tool blocks until advisor completes and returns the result directly
-```
-
-## Example: Decision — Architecture with Insight
+### Decision — Architecture with Insight
 
 1. Executor uncertain between two caching strategies.
 2. Escalates with constraints (latency target, memory cap).
@@ -121,21 +36,21 @@ prompt: |
    ```
 4. Executor implements the single clear path.
 
-## Example: Completion Gate — APPROVE
+### Completion Gate — APPROVE
 
 1. Executor finishes feature, runs tests (all pass), verifies screenshots before/after.
 2. Sends completion gate with all requirements listed, each marked met.
 3. Advisor returns APPROVE with effort summary.
 4. Executor tells user: "Done."
 
-## Example: Completion Gate — GAPS
+### Completion Gate — GAPS
 
 1. Executor believes feature is done.
 2. Sends completion gate; spec had 4 requirements, executor only addressed 3.
 3. Advisor returns GAPS: "Requirement 4 (error state UI) not addressed."
 4. Executor resumes, implements error state, re-runs completion gate.
 
-## Example: Decision — Scope Discipline
+### Decision — Scope Discipline
 
 1. Executor asks advisor about adding WebSocket support to the caching layer "while we're here."
 2. Advisor returns:
@@ -154,14 +69,14 @@ prompt: |
    Effort: N/A (preventing unnecessary Large effort)
    ```
 
-## Example: Stop Signal
+### Stop Signal
 
 1. Executor detects destructive migration risk without rollback.
 2. Escalates for decision.
 3. Advisor returns STOP with requirement: define rollback and data backup procedure first.
 4. Executor halts execution and asks user for approval/constraints.
 
-## Example: Completion Gate — Pushback on Waived Verification
+### Completion Gate — Pushback on Waived Verification
 
 1. Executor completes feature but skips e2e tests, noting "dev server not running."
 2. Sends completion gate with "e2e tests: skipped (server not up)" under uncertain/skipped.
@@ -171,7 +86,7 @@ prompt: |
    - "Re-run completion gate after starting the server and running e2e."
 4. Executor investigates server startup, starts the server, runs e2e tests, re-submits completion gate.
 
-## Example: Completion Gate — Acceptable Waiver (Rare)
+### Completion Gate — Acceptable Waiver (Rare)
 
 1. Executor completes feature. E2e test requires staging environment with valid API key.
 2. Executor attempted: tried `npm run staging`, got auth error. Checked README for key setup. Documented the attempt with error output.

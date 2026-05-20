@@ -14,7 +14,7 @@ Interviewing is separate from PRD creation. When embedded in PRD creation, the a
 ## When to Use
 
 - **Before `create-prd`** for any feature (≥1 day) — this is the mandatory interview phase
-- **Standalone for standard small changes** (<1 day) — interview output serves as the lightweight spec (no file artifact needed)
+- **Standalone for standard small changes** (<1 day) — interview output serves as the lightweight spec
 - **Before `diagnose`** when the bug needs scoping before debugging begins
 - When user says "help me plan", "not sure about the approach", "let me think through this"
 
@@ -36,7 +36,7 @@ Interviewing is separate from PRD creation. When embedded in PRD creation, the a
 
 ## Rules
 
-1. **Ask one question at a time.** Wait for the answer before moving to the next.
+1. **Ask EXACTLY one question at a time.** Formulate the question, provide your recommended answer, then STOP and wait for the user's response. Do NOT ask a second question in the same message. This is the most important rule.
 2. **Provide a recommended answer** for each question — grounded in codebase knowledge when possible.
 3. **If a question can be answered by exploring the codebase, explore the codebase instead** of asking the user.
 4. **Cap at 8-10 questions.** After that, synthesize what you know and propose next steps. User can always request more interviewing.
@@ -61,8 +61,8 @@ Ask: is this a bug, a small change (<1 day), or a feature (≥1 day)?
 
 This determines what follows:
 - **Bug** → hand off to `diagnose` (interview output is the bug scope)
-- **Small change** → proceed to `bdd-implement` (interview output IS the spec — no file artifact)
-- **Feature** → proceed to `create-prd` (interview output feeds the PRD)
+- **Small change** → proceed to `bdd-implement` (interview spec IS the spec)
+- **Feature** → proceed to `create-prd` (interview spec feeds the PRD)
 
 ### 2. Interview
 
@@ -94,6 +94,41 @@ After interviewing (or when hitting the 8-10 question cap):
 1. **Summarize resolutions** — what was decided, what remains uncertain.
 2. **Propose next steps** — which skill follows (`diagnose`, `create-prd`, `bdd-implement`).
 3. **Present via `question` tool** — user confirms next steps or requests more interviewing.
+
+### 4. Persist Interview Spec
+
+After synthesis and user confirmation, save the interview spec to a durable file:
+
+**Path:** `docs/prds/interview/<slug>.md`
+**Slug:** kebab-case identifier for the feature/change (e.g., `inline-todo-editing`, `auth-flow`)
+
+**Format:**
+```markdown
+# <Title>
+
+## Scope
+<bug | small-change | feature>
+
+## Decisions
+
+- **<decision area>**: <what was decided>
+- **<decision area>**: <what was decided>
+
+## Acceptance Criteria
+
+1. <criterion>
+2. <criterion>
+
+## Open Questions
+
+- <anything still uncertain, or "none">
+```
+
+**Rules:**
+- File is never committed to git (lives in `docs/prds/` which is gitignored)
+- For features: this file feeds `create-prd` — the PRD is synthesized from it
+- For small changes: this file IS the spec for `bdd-implement`
+- For bugs: skip this step — bugs go directly to `diagnose`
 
 ## Domain Glossary (CONTEXT.md)
 
@@ -134,7 +169,7 @@ Only create an ADR during interviewing when ALL THREE criteria are met:
 - Do NOT write a PRD, spec, or any artifact during interviewing — understanding only (CONTEXT.md and ADRs are lightweight references, not specs)
 - Do NOT ask more than one question at a time
 - Do NOT skip the recommended answer for any question
-- Do NOT interview indefinitely — respect the 8-10 question cap
+- Do NOT interview indefinitely — respect the question cap
 - Do NOT add implementation details to `CONTEXT.md`
 - Do NOT create `CONTEXT.md` unless interviewing actually resolved terminology ambiguity
 - Do NOT create ADRs for obvious or easily-reversible decisions
