@@ -12,11 +12,18 @@ import {
   LOOP_DEFAULTS,
 } from './loop-detector.js'
 
+interface ToolCallRecord {
+  name: string
+  input: string
+}
+
 interface SessionLoopState {
   detectors: Map<string, LoopDetector>
   partTypes: Map<string, "text" | "reasoning">
   attempt: number
   lastMessageID: string
+  toolCallHistory: ToolCallRecord[]
+  toolLoopAttempt: number
 }
 
 export interface LoopMonitorOptions {
@@ -28,6 +35,8 @@ export interface LoopMonitorOptions {
   min_chars?: number
   max_nudges?: number
   reminder?: string
+  max_tool_repeats?: number
+  tool_loop_nudge?: string
 }
 
 export class LoopMonitor {
@@ -48,10 +57,33 @@ export class LoopMonitor {
         partTypes: new Map(),
         attempt: 0,
         lastMessageID: "",
+        toolCallHistory: [],
+        toolLoopAttempt: 0,
       }
       this.sessions.set(sessionID, state)
     }
     return state
+  }
+
+  private normalizeToolInput(input: any): string {
+    if (input === null || input === undefined) return ""
+    try {
+      const deepSort = (obj: any): any => {
+        if (obj === null || obj === undefined) return obj
+        if (typeof obj === "string") return obj.trim() || undefined
+        if (typeof obj !== "object") return obj
+        if (Array.isArray(obj)) return obj.map(deepSort).filter(v => v !== undefined)
+        const sorted: Record<string, any> = {}
+        for (const key of Object.keys(obj).sort()) {
+          const val = deepSort(obj[key])
+          if (val !== undefined) sorted[key] = val
+        }
+        return sorted
+      }
+      return JSON.stringify(deepSort(input))
+    } catch {
+      return JSON.stringify(input)
+    }
   }
 
   handleEvent(event: any): void {
@@ -65,6 +97,18 @@ export class LoopMonitor {
 
     if (event.type === "message.part.delta") {
       this.handlePartDelta(props)
+    }
+
+    if (event.type === "message.updated") {
+      const sessionID = props?.sessionID
+      const messageID = props?.info?.id
+      if (typeof sessionID === "string" && typeof messageID === "string") {
+        const state = this.sessions.get(sessionID)
+        if (state && messageID !== state.lastMessageID) {
+          state.toolCallHistory = []
+          state.toolLoopAttempt = 0
+        }
+      }
     }
 
     if (event.type === "session.deleted" || event.type === "session.idle") {
@@ -105,6 +149,66 @@ export class LoopMonitor {
       if (part.messageID && part.messageID !== state.lastMessageID) {
         state.lastMessageID = part.messageID
       }
+    }
+
+    if (part.type === "tool") {
+      const state = this.getSession(sessionID)
+
+      if (part.messageID && part.messageID !== state.lastMessageID) {
+        state.toolCallHistory = []
+        state.toolLoopAttempt = 0
+        state.lastMessageID = part.messageID
+      }
+
+      const toolName: string = part.tool ?? ""
+      const toolInput = this.normalizeToolInput(part.state?.input)
+
+      state.toolCallHistory.push({ name: toolName, input: toolInput })
+      if (state.toolCallHistory.length > 4) {
+        state.toolCallHistory.shift()
+      }
+
+      this.checkToolLoop(sessionID, state)
+    }
+  }
+
+  private checkToolLoop(sessionID: string, state: SessionLoopState): void {
+    const maxRepeats = this.options.max_tool_repeats ?? 3
+    if (state.toolCallHistory.length < maxRepeats) return
+
+    const recent = state.toolCallHistory.slice(-maxRepeats)
+    const first = recent[0]
+    const allSame = recent.every((call) => call.name === first.name && call.input === first.input)
+    if (!allSame) return
+
+    const toolName = first.name || "unknown tool"
+    const count = state.toolCallHistory.length
+
+    const defaultReminder = `TOOL LOOP DETECTED: You have called \`${toolName}\` with identical arguments ${count} times consecutively. The same call will produce the same result. Stop and take a completely different approach.`
+    const reminder = this.options.tool_loop_nudge ?? defaultReminder
+
+    const decision = recovery(state.toolLoopAttempt, {
+      max_nudges: this.options.max_nudges,
+      reminder,
+    })
+    state.toolLoopAttempt++
+
+    if (decision.action === "nudge") {
+      void this.client.session.prompt({
+        path: { id: sessionID },
+        body: {
+          noReply: true,
+          parts: [{ type: "text", text: decision.reminder, synthetic: true }],
+        },
+      }).catch((e: any) => {
+        console.warn('[groundwork] loop-detection: failed to send tool-loop nudge', e)
+      })
+    } else {
+      void this.client.session.abort({ path: { id: sessionID } })
+        .catch((e: any) => {
+          console.warn('[groundwork] loop-detection: failed to abort session', e)
+        })
+      this.sessions.delete(sessionID)
     }
   }
 

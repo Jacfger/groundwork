@@ -23,7 +23,7 @@ This skill is injected at conversation start. If you notice the core rules, rout
 8. **No self-review.** Use the **advisor** agent via `task(agent="advisor", ...)` for any technical uncertainty, not internal reasoning loops.
 9. **BDD over unit tests, validation over verification.** For any visible UI change or bug, validate with actual visual inspection (XCUITest, Playwright) before and after — not just code assertions. For non-UI work, prefer integration or end-to-end tests that validate behavior over unit tests that verify implementation.
 10. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
-11. **Prefer watch/follow variants of commands** when available, now that PTY makes it practical. Examples: use `gh pr checks --watch` instead of polling `gh pr checks`; use `jest --watch` instead of one-shot `jest`; use `kubectl get pods --watch` instead of repeated calls. If a CLI tool has a `--watch`, `--follow`, `-f`, or `--tail` flag, prefer it over running the command repeatedly.
+11. **Prefer watch/follow variants of commands.** NEVER poll-repeat a command — always use `--watch`/`--follow`/`-f`/`--tail` with PTY instead. Examples: `gh pr checks --watch`, `gh run view --log`, `jest --watch`, `kubectl get pods --watch`. **Babysitting CI is a MUST-use-PTY pattern**: spawn a PTY session for `gh pr checks --watch` or `gh run view --log-failed` and wait for it, rather than calling `gh pr checks` or `gh run view` repeatedly in bash. If a command has a `--watch` flag, use it — period. Repeated one-shot calls waste tokens and risk missing state changes.
 12. **Use `/handoff` for session transitions.** When context gets long or a fresh session is needed, use `/handoff` — it creates a focused continuation prompt with file references auto-loaded. The new session can read the source transcript via `read_session`.
 13. **MANDATORY skill tool invocation.** When issue-type routing names a skill, you MUST invoke the `skill` tool to load it. Do NOT implement directly when a routing path specifies a skill — the skill contains instructions not present in this bootstrap. The only exceptions are `Trivial` and `Docs-Only` paths.
 
@@ -40,6 +40,7 @@ This skill is injected at conversation start. If you notice the core rules, rout
 | Writing or editing UI/UX code | `designer` agent | `task(agent="designer", ...)` |
 | Debugging / reproduction steps | `coder` agent | `task(agent="coder", ...)` |
 | Strategic analysis / decisions | `advisor` agent | `task(agent="advisor", ...)` |
+| Escalating decisions (coder → advisor) | `advisor` agent | `task(agent="advisor", ...)` |
 | Running tests / builds | `coder` agent | `task(agent="coder", ...)` |
 | Visual analysis / screenshots | `observer` agent | `task(agent="observer", ...)` |
 | Before/after visual comparison | `observer` agent | `task(agent="observer", ...)` |
@@ -82,6 +83,7 @@ Temperature defaults are set automatically by the plugin. Override in `opencode.
 - Any strategic decision → `advisor`
 - Any UI/UX implementation or styling → `designer`
 - Any visual analysis or screenshot comparison → `observer`
+- Any architectural escalation from coder → advisor via `task(agent="advisor", ...)` (coder is the ONLY specialist agent allowed to call task, and ONLY for advisor)
 
 **DO YOURSELF (only these):**
 - Classify the issue type and pick a routing path
@@ -110,6 +112,14 @@ RIGHT:  Classify → delegate exploration to explore → delegate coding to 3x c
 RIGHT:  UI feature → delegate styling to designer (kimi model) → delegate logic to coder
         → delegate before/after comparison to observer → advisor-gate
         (each specialist uses its best model)
+
+CODER TOOL LOOP:
+WRONG:  Coder calls tool X → gets result → calls tool X again with same args → repeats (loop)
+RIGHT:  Loop detector catches it → sends nudge → coder takes different approach
+
+CI BABYSITTING:
+WRONG:  bash "gh pr checks" → bash "gh pr checks" → bash "gh pr checks" (polling loop)
+RIGHT:  pty_spawn "gh pr checks --watch" → pty_read on completion notification
 ```
 
 The wrong pattern is the most common failure mode. It feels natural to "just do it" but it sacrifices velocity and quality.
