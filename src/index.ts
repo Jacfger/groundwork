@@ -32,6 +32,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const groundworkSkillsDir = path.resolve(__dirname, '..', 'skills', 'groundwork')
 const groundworkAgentsDir = path.resolve(__dirname, '..', 'agents')
 
+const AGENT_DEFAULTS: Record<string, { temperature?: number }> = {
+  advisor: { temperature: 0.1 },
+  coder: { temperature: 0.2 },
+  explore: { temperature: 0.1 },
+  designer: { temperature: 0.7 },
+  observer: { temperature: 0.1 },
+}
+
 const handoffProcessedSessions = new Set<string>()
 
 export const GroundworkPlugin = async (input: PluginInput) => {
@@ -76,6 +84,9 @@ export const GroundworkPlugin = async (input: PluginInput) => {
           }
           if (!config.agent[name].prompt) {
             config.agent[name].prompt = content.trim()
+          }
+          if (AGENT_DEFAULTS[name]?.temperature !== undefined && config.agent[name].temperature === undefined) {
+            config.agent[name].temperature = AGENT_DEFAULTS[name].temperature
           }
         }
       }

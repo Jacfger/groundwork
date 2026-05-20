@@ -44,6 +44,32 @@ Restart OpenCode. Skills auto-discover.
 | `prototype` | Design exploration — logic TUI or UI variants, throwaway |
 | `goal` | Persistent project goal — survives compression and restarts |
 
+## Agents
+
+| Agent | Model recommendation | Temperature | Purpose |
+|-------|---------------------|-------------|---------|
+| `advisor` | `openai/gpt-5.4` | 0.1 | Strategic decisions, architecture, code review |
+| `coder` | `kimi-for-coding/k2.6` | 0.2 | Fast implementation, tests, build verification |
+| `explore` | `openai/gpt-5.4-mini` | 0.1 | Codebase search, pattern discovery |
+| `designer` | `kimi-for-coding/k2.6` | 0.7 | UI/UX, styling, responsive design, visual polish |
+| `observer` | `openai/gpt-5.4-mini` | 0.1 | Screenshot analysis, visual comparison, PDF interpretation |
+
+Configure models in `opencode.json`:
+
+```json
+{
+  "agent": {
+    "advisor": { "model": "openai/gpt-5.4" },
+    "coder": { "model": "kimi-for-coding/k2.6" },
+    "explore": { "model": "openai/gpt-5.4-mini" },
+    "designer": { "model": "kimi-for-coding/k2.6" },
+    "observer": { "model": "openai/gpt-5.4-mini" }
+  }
+}
+```
+
+Temperature defaults are set automatically. Override in agent config if needed.
+
 ## Rules
 
 1. Issue-type routing: bug → diagnose, small change → interview + bdd-implement, feature → interview + create-prd + bdd-implement

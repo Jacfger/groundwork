@@ -37,21 +37,51 @@ This skill is injected at conversation start. If you notice the core rules, rout
 |----------|------------|-----|
 | Understanding codebase structure | `explore` agent | `task(agent="explore", ...)` |
 | Writing or editing code | `coder` agent | `task(agent="coder", ...)` |
+| Writing or editing UI/UX code | `designer` agent | `task(agent="designer", ...)` |
 | Debugging / reproduction steps | `coder` agent | `task(agent="coder", ...)` |
 | Strategic analysis / decisions | `advisor` agent | `task(agent="advisor", ...)` |
 | Running tests / builds | `coder` agent | `task(agent="coder", ...)` |
+| Visual analysis / screenshots | `observer` agent | `task(agent="observer", ...)` |
+| Before/after visual comparison | `observer` agent | `task(agent="observer", ...)` |
 | Interview Q&A | YOURSELF (interactive) | `question` tool |
 | Classification / routing | YOURSELF | (no delegation) |
 | Reviewing subagent output | YOURSELF | (no delegation) |
 
+### Agent Selection Guide
+
+| Agent | Model recommendation | Temperature | Best for |
+|-------|---------------------|-------------|----------|
+| `advisor` | `openai/gpt-5.4` (strong reasoning) | 0.1 | Architecture, trade-offs, code review |
+| `coder` | `kimi-for-coding/k2.6` (high reasoning) | 0.2 | Bounded implementation, tests, build verification |
+| `explore` | `openai/gpt-5.4-mini` (fast, cheap) | 0.1 | Codebase search, pattern discovery |
+| `designer` | `kimi-for-coding/k2.6` (high reasoning, visual taste) | 0.7 | UI/UX, styling, responsive design, visual polish |
+| `observer` | `openai/gpt-5.4-mini` (vision-capable) | 0.1 | Screenshot analysis, visual comparison, PDF interpretation |
+
+**Configure per-agent models in `opencode.json`:**
+```json
+{
+  "agent": {
+    "advisor": { "model": "openai/gpt-5.4" },
+    "coder": { "model": "kimi-for-coding/k2.6" },
+    "explore": { "model": "openai/gpt-5.4-mini" },
+    "designer": { "model": "kimi-for-coding/k2.6" },
+    "observer": { "model": "openai/gpt-5.4-mini" }
+  }
+}
+```
+
+Temperature defaults are set automatically by the plugin. Override in `opencode.json` agent config if needed.
+
 ### When to delegate vs do it yourself
 
 **DELEGATE (always):**
-- Any `edit`, `write`, or file creation → `coder`
+- Any `edit`, `write`, or file creation → `coder` (or `designer` for UI work)
 - Any `grep`, `glob`, or codebase exploration → `explore`
 - Any multi-step debugging → `coder`
 - Any build/test verification → `coder`
 - Any strategic decision → `advisor`
+- Any UI/UX implementation or styling → `designer`
+- Any visual analysis or screenshot comparison → `observer`
 
 **DO YOURSELF (only these):**
 - Classify the issue type and pick a routing path
@@ -63,9 +93,9 @@ This skill is injected at conversation start. If you notice the core rules, rout
 ### Why delegation matters
 
 1. **Velocity**: Launch parallel coder tasks — 3 tasks in parallel finish 3x faster than doing them sequentially yourself
-2. **Quality**: Each agent is specialized — coder writes better code, explore maps faster, advisor thinks deeper
+2. **Quality**: Each agent is specialized — coder writes better code, explore maps faster, advisor thinks deeper, designer has visual taste, observer sees details you'd miss
 3. **Context**: You preserve your context window for orchestration decisions instead of filling it with code details
-4. **Scalability**: As tasks grow larger, parallel delegation scales; doing everything yourself does not
+4. **Model diversity**: Different agents use different models — designer uses kimi for UI taste, advisor uses gpt-5.4 for reasoning, coder uses gpt-5.4-mini for speed
 
 ### Anti-pattern: The Implementing Orchestrator
 
@@ -74,8 +104,12 @@ WRONG:  Classify → read files → write code → run tests → review → advi
         (orchestrator does everything sequentially)
 
 RIGHT:  Classify → delegate exploration to explore → delegate coding to 3x coder in parallel
-        → review outputs → delegate verification to coder → advisor-gate
+        → delegate visual review to observer → review outputs → advisor-gate
         (orchestrator delegates, reviews, orchestrates)
+
+RIGHT:  UI feature → delegate styling to designer (kimi model) → delegate logic to coder
+        → delegate before/after comparison to observer → advisor-gate
+        (each specialist uses its best model)
 ```
 
 The wrong pattern is the most common failure mode. It feels natural to "just do it" but it sacrifices velocity and quality.
@@ -324,7 +358,7 @@ Every subagent task automatically gets a preamble prepended: `[SUBAGENT TASK RUL
 - Make decisions autonomously
 - Return final result in last message
 
-This is the **soft prevention** layer. The **hard deny** layer in `opencode.json` (`"question": "deny"` for coder/explore/advisor agents) catches any agent that ignores the preamble.
+This is the **soft prevention** layer. The **hard deny** layer in `opencode.json` (`"question": "deny"` for all specialist agents) catches any agent that ignores the preamble.
 
 ## Skill Invocation Pattern
 
