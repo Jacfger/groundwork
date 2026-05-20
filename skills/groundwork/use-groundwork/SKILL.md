@@ -26,10 +26,13 @@ This skill is injected at conversation start. If you notice the core rules, rout
 10. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
 11. **Prefer watch/follow variants of commands** when available, now that PTY makes it practical. Examples: use `gh pr checks --watch` instead of polling `gh pr checks`; use `jest --watch` instead of one-shot `jest`; use `kubectl get pods --watch` instead of repeated calls. If a CLI tool has a `--watch`, `--follow`, `-f`, or `--tail` flag, prefer it over running the command repeatedly.
 12. **Use `/handoff` for session transitions.** When context gets long or a fresh session is needed, use `/handoff` — it creates a focused continuation prompt with file references auto-loaded. The new session can read the source transcript via `read_session`.
+13. **MANDATORY skill tool invocation.** When issue-type routing names a skill, you MUST invoke the `skill` tool to load it. Do NOT implement directly when a routing path specifies a skill — the skill contains instructions not present in this bootstrap. The only exceptions are `Trivial` and `Docs-Only` paths.
 
 ## The 1% Escalation Heuristic
 
 **If there is even a 1% chance the current decision is high-impact, irreversible, ambiguous, or likely to cause rework — invoke `advisor-gate`.** When in doubt, escalate once early rather than discover a wrong path late.
+
+**If the issue-type routing names a skill, you MUST invoke the `skill` tool — no exceptions except Trivial and Docs-Only paths.** This is the single most important compliance rule. The most common failure mode is: agent classifies correctly → skips skill invocation → implements directly → loses workflow discipline.
 
 This applies to:
 - Any skill listed in the Skill Triggers table below
@@ -76,6 +79,19 @@ When a task fails:
 
 **Before starting any task, classify the issue type and scope, then follow the corresponding path.** Classification is based on three dimensions: **type** (what), **scope** (how much), and **specificity** (how clear the requirements are).
 
+### MANDATORY SKILL INVOCATION
+
+When a routing path names a skill (e.g., `interview`, `diagnose`, `create-prd`, `bdd-implement`, `advisor-gate`, `prototype`), you **MUST invoke the `skill` tool** to load it. These are NOT optional suggestions — they are mandatory workflow steps.
+
+```
+WRONG:  Read routing path → classify → skip skill → implement directly
+RIGHT:  Read routing path → classify → invoke skill tool → follow skill's instructions
+```
+
+**Why this is mandatory:** Each skill contains domain-specific instructions (question strategies, debugging loops, decomposition patterns) that are NOT included in this bootstrap. Without loading the skill, you lose critical workflow discipline.
+
+**Exception:** Only the `Trivial` and `Docs-Only` paths skip skill invocation entirely. Every other path requires at least one skill load.
+
 ### Trivial (fully specified, <1h, ≤2 files)
 ```
 implement directly → advisor-gate
@@ -89,21 +105,21 @@ implement directly → advisor-gate
 
 **Trivial bug** (obvious cause, ≤1 file fix):
 ```
-diagnose (abbreviated: Phase 1+2+5+6) → advisor-gate
+invoke skill "diagnose" → abbreviated mode (Phase 1+2+5+6) → invoke skill "advisor-gate"
 ```
 - Skip Phase 3 (hypothesise) and Phase 4 (instrument) — cause is already known
 - Write regression test, apply fix, verify
 
 **Standard bug** (cause unclear, needs investigation):
 ```
-diagnose (full 6-phase loop) → advisor-gate
+invoke skill "diagnose" → full 6-phase loop → invoke skill "advisor-gate"
 ```
 - NO PRD needed — `diagnose` owns the fix AND the regression test
 - Do NOT invoke `bdd-implement` for bugs — `diagnose` is the complete bug path
 
 **Complex bug** (multi-system, unclear boundaries, might be a design issue):
 ```
-interview (scoping) → diagnose → advisor-gate
+invoke skill "interview" (scoping) → invoke skill "diagnose" → invoke skill "advisor-gate"
 ```
 - Interview resolves scope before debugging begins
 - If the bug reveals an architectural issue, note it in the post-mortem
@@ -118,7 +134,7 @@ implement directly → advisor-gate
 
 **Standard small change** (needs some exploration or design):
 ```
-interview (quick: 3-4 questions) → bdd-implement (decompose into 2-3 parallel tasks) → advisor-gate
+invoke skill "interview" (quick: 3-4 questions) → invoke skill "bdd-implement" (decompose into 2-3 parallel tasks) → invoke skill "advisor-gate"
 ```
 - Interview output IS the spec — no file artifact needed
 - Quick interview: cover only the unclear aspects, skip what's obvious
@@ -126,7 +142,7 @@ interview (quick: 3-4 questions) → bdd-implement (decompose into 2-3 parallel 
 
 ### Feature (≥1 day, or architectural)
 ```
-interview (full: 8-10 questions) → create-prd → bdd-implement (vertical-slice decomposition) → advisor-gate
+invoke skill "interview" (full: 8-10 questions) → invoke skill "create-prd" → invoke skill "bdd-implement" (vertical-slice decomposition) → invoke skill "advisor-gate"
 ```
 - Interviewing is mandatory before PRD creation
 - PRD is created from interview spec, not from a blank slate
@@ -135,15 +151,15 @@ interview (full: 8-10 questions) → create-prd → bdd-implement (vertical-slic
 
 ### Spike / Design Exploration
 ```
-prototype → feed findings into next skill
+invoke skill "prototype" → feed findings into next skill
 ```
 - When the approach is uncertain and needs validation before committing
 - Prototype findings inform interview or PRD
 
 ### Refactor
 ```
-If <1d: small change path (interview → bdd-implement → advisor-gate)
-If ≥1d: feature path (interview → create-prd → bdd-implement → advisor-gate)
+If <1d: invoke skill "interview" → invoke skill "bdd-implement" → invoke skill "advisor-gate"
+If ≥1d: invoke skill "interview" → invoke skill "create-prd" → invoke skill "bdd-implement" → invoke skill "advisor-gate"
 ```
 - Refactoring follows the same paths — scope determines the branch
 
@@ -228,6 +244,7 @@ When a subagent task fails or produces wrong output:
 ## What NOT to Do
 
 - **NEVER declare done without `advisor-gate` APPROVE — no exceptions**
+- **NEVER skip skill tool invocation when routing names a skill.** If the path says `invoke skill "diagnose"`, you MUST call the `skill` tool with `name: "diagnose"`. Implementing directly when a skill is specified is the most common compliance failure.
 - **NEVER use `task` when acting as advisor.** Subagent tasks are for executors only.
 - **NEVER use `task` inside a subagent task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Subagent prompts must be fully self-contained.
 - **NEVER use `question` tool in subagents.** Subagents must not ask questions — they must make decisions and do the work. The executor handles all user-facing questions.
@@ -260,34 +277,34 @@ digraph flow {
   "Classify: type + scope + specificity" -> "Spike" [label="uncertain approach"];
 
   "Trivial" -> "implement directly";
-  "implement directly" -> "advisor-gate";
+  "implement directly" -> "invoke skill advisor-gate";
 
   "Bug path" -> "Trivial bug" [label="obvious cause"];
   "Bug path" -> "Standard bug" [label="needs investigation"];
   "Bug path" -> "Complex bug" [label="multi-system"];
-  "Trivial bug" -> "diagnose (abbreviated)";
-  "Standard bug" -> "diagnose (full)";
-  "Complex bug" -> "interview (scoping)";
-  "interview (scoping)" -> "diagnose (full)";
-  "diagnose (abbreviated)" -> "advisor-gate";
-  "diagnose (full)" -> "advisor-gate";
+  "Trivial bug" -> "invoke skill diagnose (abbreviated)";
+  "Standard bug" -> "invoke skill diagnose (full)";
+  "Complex bug" -> "invoke skill interview (scoping)";
+  "invoke skill interview (scoping)" -> "invoke skill diagnose (full)";
+  "invoke skill diagnose (abbreviated)" -> "invoke skill advisor-gate";
+  "invoke skill diagnose (full)" -> "invoke skill advisor-gate";
 
   "Small change path" -> "Trivial SC" [label="fully specified"];
   "Small change path" -> "Standard SC" [label="needs design"];
   "Trivial SC" -> "implement directly";
-  "Standard SC" -> "interview (quick: 3-4 Q)";
-  "interview (quick: 3-4 Q)" -> "bdd-implement (2-3 parallel tasks)";
-  "bdd-implement (2-3 parallel tasks)" -> "advisor-gate";
+  "Standard SC" -> "invoke skill interview (quick: 3-4 Q)";
+  "invoke skill interview (quick: 3-4 Q)" -> "invoke skill bdd-implement (2-3 parallel tasks)";
+  "invoke skill bdd-implement (2-3 parallel tasks)" -> "invoke skill advisor-gate";
 
-  "Feature path" -> "interview (full: 8-10 Q)";
-  "interview (full: 8-10 Q)" -> "create-prd";
-  "create-prd" -> "bdd-implement (vertical slices)";
-  "bdd-implement (vertical slices)" -> "advisor-gate";
+  "Feature path" -> "invoke skill interview (full: 8-10 Q)";
+  "invoke skill interview (full: 8-10 Q)" -> "invoke skill create-prd";
+  "invoke skill create-prd" -> "invoke skill bdd-implement (vertical slices)";
+  "invoke skill bdd-implement (vertical slices)" -> "invoke skill advisor-gate";
 
-  "Spike" -> "prototype";
-  "prototype" -> "interview | create-prd | bdd-implement" [label="findings feed next"];
+  "Spike" -> "invoke skill prototype";
+  "invoke skill prototype" -> "invoke skill interview | create-prd | bdd-implement" [label="findings feed next"];
 
-  "advisor-gate" -> "Get APPROVE";
+  "invoke skill advisor-gate" -> "Get APPROVE";
   "Get APPROVE" -> "Use question tool to present result";
 }
 ```
