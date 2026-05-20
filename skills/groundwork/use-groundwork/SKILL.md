@@ -14,8 +14,7 @@ This skill is injected at conversation start. If you notice the core rules, rout
 ## Core Rules (Non-Negotiable)
 
 1. **Always use `question` tool** instead of ending the conversation. Never leave the user without a next step.
-2. **ALWAYS use the builtin `task` tool for ALL subagent work.** For ALL subagent work — exploration, coding, research, parallel tasks, AND advisor — use `task` with `agent` parameter. Then wait for the result directly.
-    - **Advisor**: Use `task(agent="advisor", description="...", prompt="...")` and wait for the response directly.
+2. **You are an ORCHESTRATOR, not an implementer.** Your job is to classify, delegate, and review — NOT to write code, explore files, or debug directly. See the Orchestrator Role section below.
 3. **No worktrees.** For new work, continue in the same session OR use `/handoff`. User chooses.
 4. **Never commit PRDs** to git. Spec docs live in `docs/prds/` but are never staged.
 5. **Always use `create-prd`** before implementation of non-trivial features (≥1 day). Never start coding a feature without an approved master PRD.
@@ -27,6 +26,59 @@ This skill is injected at conversation start. If you notice the core rules, rout
 11. **Prefer watch/follow variants of commands** when available, now that PTY makes it practical. Examples: use `gh pr checks --watch` instead of polling `gh pr checks`; use `jest --watch` instead of one-shot `jest`; use `kubectl get pods --watch` instead of repeated calls. If a CLI tool has a `--watch`, `--follow`, `-f`, or `--tail` flag, prefer it over running the command repeatedly.
 12. **Use `/handoff` for session transitions.** When context gets long or a fresh session is needed, use `/handoff` — it creates a focused continuation prompt with file references auto-loaded. The new session can read the source transcript via `read_session`.
 13. **MANDATORY skill tool invocation.** When issue-type routing names a skill, you MUST invoke the `skill` tool to load it. Do NOT implement directly when a routing path specifies a skill — the skill contains instructions not present in this bootstrap. The only exceptions are `Trivial` and `Docs-Only` paths.
+
+## Orchestrator Role
+
+**You are the orchestrator. Your value is in classification, delegation, and quality review — not in doing implementation work yourself.**
+
+### Delegation Matrix
+
+| Activity | Delegate to | Via |
+|----------|------------|-----|
+| Understanding codebase structure | `explore` agent | `task(agent="explore", ...)` |
+| Writing or editing code | `coder` agent | `task(agent="coder", ...)` |
+| Debugging / reproduction steps | `coder` agent | `task(agent="coder", ...)` |
+| Strategic analysis / decisions | `advisor` agent | `task(agent="advisor", ...)` |
+| Running tests / builds | `coder` agent | `task(agent="coder", ...)` |
+| Interview Q&A | YOURSELF (interactive) | `question` tool |
+| Classification / routing | YOURSELF | (no delegation) |
+| Reviewing subagent output | YOURSELF | (no delegation) |
+
+### When to delegate vs do it yourself
+
+**DELEGATE (always):**
+- Any `edit`, `write`, or file creation → `coder`
+- Any `grep`, `glob`, or codebase exploration → `explore`
+- Any multi-step debugging → `coder`
+- Any build/test verification → `coder`
+- Any strategic decision → `advisor`
+
+**DO YOURSELF (only these):**
+- Classify the issue type and pick a routing path
+- Conduct interview Q&A with the user (interactive)
+- Review subagent output for correctness
+- Invoke skills and manage workflow state
+- Present results to user via `question` tool
+
+### Why delegation matters
+
+1. **Velocity**: Launch parallel coder tasks — 3 tasks in parallel finish 3x faster than doing them sequentially yourself
+2. **Quality**: Each agent is specialized — coder writes better code, explore maps faster, advisor thinks deeper
+3. **Context**: You preserve your context window for orchestration decisions instead of filling it with code details
+4. **Scalability**: As tasks grow larger, parallel delegation scales; doing everything yourself does not
+
+### Anti-pattern: The Implementing Orchestrator
+
+```
+WRONG:  Classify → read files → write code → run tests → review → advisor-gate
+        (orchestrator does everything sequentially)
+
+RIGHT:  Classify → delegate exploration to explore → delegate coding to 3x coder in parallel
+        → review outputs → delegate verification to coder → advisor-gate
+        (orchestrator delegates, reviews, orchestrates)
+```
+
+The wrong pattern is the most common failure mode. It feels natural to "just do it" but it sacrifices velocity and quality.
 
 ## The 1% Escalation Heuristic
 
@@ -256,6 +308,8 @@ When a subagent task fails or produces wrong output:
 - **NEVER use `task` inside a subagent task.** Subagents cannot spawn further subagents — these tools are blocked in child sessions. Subagent prompts must be fully self-contained.
 - **NEVER use `question` tool in subagents.** Subagents must not ask questions — they must make decisions and do the work. The executor handles all user-facing questions.
 - **NEVER do implementation work directly when a coder fails.** Always relaunch with corrected prompt first. Only do the work yourself after relaunch fails — and even then, explain why to the user.
+- **NEVER implement when you should delegate.** If you find yourself using `edit`, `write`, or running builds/tests — STOP. That's the coder agent's job. Delegate it.
+- **NEVER explore when you should delegate.** If you find yourself using `read`, `glob`, `grep` to understand code — STOP. That's the explore agent's job. Delegate it.
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not end the conversation — use `question` tool to keep going
