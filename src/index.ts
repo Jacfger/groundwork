@@ -22,9 +22,11 @@ import { createBackgroundInputTool } from './tools/background-input.js'
 import { createBackgroundStatusTool } from './tools/background-status.js'
 import { createBackgroundStreamTool } from './tools/background-stream.js'
 import { createHandoffSessionTool } from './tools/handoff-session.js'
+import { createSetGoalTool } from './tools/set-goal.js'
 // import { createReadSessionTool } from './tools/read-session.js'
 // import { createRobustReadTool } from './tools/robust-read.js'
 import type { ToolDeps } from './tools/deps.js'
+import { readGoal, goalReminder } from './lib/goal.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const groundworkSkillsDir = path.resolve(__dirname, '..', 'skills', 'groundwork')
@@ -53,6 +55,10 @@ export const GroundworkPlugin = async (input: PluginInput) => {
         description: 'Create a focused handoff prompt for a new session',
         template: HANDOFF_COMMAND,
       }
+      config.command['goal'] = {
+        description: 'Set, check, pause, resume, or clear the active project goal',
+        template: 'Use the set_goal tool to manage the project goal based on the user\'s request.',
+      }
 
       config.agent = config.agent || {}
       if (existsSync(groundworkAgentsDir)) {
@@ -75,7 +81,7 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       }
       try {
         const gitignorePath = path.join(directory, '.gitignore')
-        const OPENCODE_IGNORE = '.opencode/background-tasks/'
+        const OPENCODE_IGNORE = '.opencode/background-tasks/\n.opencode/goal.json'
         let gitignore = ''
         try { gitignore = await fsPromises.readFile(gitignorePath, 'utf8') } catch {}
         if (!gitignore.includes(OPENCODE_IGNORE)) {
@@ -90,9 +96,25 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       if (!bootstrap || !output.messages.length) return
       const firstUser = output.messages.find((m: any) => m.info.role === 'user')
       if (!firstUser || !firstUser.parts.length) return
-      if (firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) return
-      const ref = firstUser.parts[0]
-      firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap })
+
+      // Inject bootstrap into first user message (once)
+      if (!firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
+        const ref = firstUser.parts[0]
+        firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap })
+      }
+
+      // Inject active goal reminder into last user message
+      const goal = readGoal(directory)
+      if (goal && goal.status === 'active') {
+        const lastUser = output.messages.filter((m: any) => m.info.role === 'user').pop()
+        if (lastUser && lastUser.parts.length) {
+          const reminder = goalReminder(goal)
+          if (!lastUser.parts.some((p: any) => p.type === 'text' && p.text.includes('ACTIVE_GOAL'))) {
+            const ref = lastUser.parts[0]
+            lastUser.parts.push({ ...ref, type: 'text', text: reminder })
+          }
+        }
+      }
     },
 
     tool: {
@@ -105,6 +127,7 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       background_status: createBackgroundStatusTool(deps),
       background_stream: createBackgroundStreamTool(deps),
       handoff_session: createHandoffSessionTool(deps),
+      set_goal: createSetGoalTool(deps),
 //      read_session: createReadSessionTool(deps),
 //      read: createRobustReadTool(deps),
     },

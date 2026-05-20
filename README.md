@@ -42,6 +42,7 @@ Restart OpenCode. Skills auto-discover.
 | `advisor-gate` | Before declaring done |
 | `bdd-implement` | After PRD approval (features) or interviewing (small changes) |
 | `prototype` | Design exploration — logic TUI or UI variants, throwaway |
+| `goal` | Persistent project goal — survives compression and restarts |
 
 ## Rules
 

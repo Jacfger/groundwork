@@ -166,14 +166,19 @@ implement directly → advisor-gate
 | `prototype` | **Design exploration.** Spike on uncertain approaches, test state models (logic TUI), explore UI layouts (variant switcher). Throwaway |
 | `commit` | Creating git commits (ensures consistent style) |
 | `opencode-acp` | Controlling another OpenCode instance via ACP protocol |
+| `goal` | **Multi-step work needing focus tracking.** Set before testing multiple flows, multi-wave implementation, or any task where losing the objective causes rework. Persisted across sessions |
 
 ## Session Conventions
 
 ### Session Goal
 
-When starting multi-wave implementation of a feature, pin the goal as the **first `todowrite` item**. Derived from the PRD's Acceptance Criteria or the interview spec's resolutions. This item stays at the top throughout implementation. After each wave, check: does remaining work still serve this goal?
+**For multi-step work, use the `goal` skill (`set_goal` tool).** It persists across context compression and session restarts, and injects a reminder into every message.
 
-If the goal becomes unclear or outdated, re-derive it from the spec before continuing.
+For quick in-session tracking, pin the goal as the **first `todowrite` item**. Derived from the PRD's Acceptance Criteria or the interview spec's resolutions.
+
+**When to use `set_goal` vs todowrite:**
+- `set_goal`: Testing multiple flows, multi-wave features, any work where losing focus across compression/restart has consequences
+- `todowrite`: Quick in-session task tracking within a single unbroken session
 
 ### Learnings (docs/learnings.md)
 

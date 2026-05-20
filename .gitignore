@@ -3,6 +3,7 @@ dist/
 *.log
 .DS_Store
 .opencode/background-tasks/
+.opencode/goal.json
 .opencode/plugins/*.js
 test-*.ts
 test-*.mjs
