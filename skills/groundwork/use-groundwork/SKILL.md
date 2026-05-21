@@ -105,13 +105,13 @@ Temperature defaults are set automatically by the plugin. Override in `opencode.
 WRONG:  Classify → read files → write code → run tests → review → advisor-gate
         (orchestrator does everything sequentially)
 
-RIGHT:  Classify → delegate exploration to explore → fan out coding to 5-15x coder in parallel
-        → delegate visual review to observer → review outputs → advisor-gate
-        (orchestrator delegates, reviews, orchestrates — MAXIMIZE fan-out width)
+RIGHT:  Classify → fan out mixed specialists (explore×2, coder×5-15, designer×1-3, observer×1-3)
+        → collect all outputs → review → advisor-gate
+        (orchestrator delegates, reviews, orchestrates — MAXIMIZE fan-out width across ALL specialist types)
 
-RIGHT:  UI feature → delegate styling to designer → delegate logic to 3x coder in parallel
-        → delegate before/after comparison to observer → advisor-gate
-        (fan out ALL independent slices simultaneously, never wait sequentially)
+RIGHT:  UI feature → fan out (designer for styling, coder×3 for logic, observer for comparison)
+        → review all outputs → advisor-gate
+        (mix specialist types in the same wave — never wait sequentially for different agent types)
 
 CODER TOOL LOOP:
 WRONG:  Coder calls tool X → gets result → calls tool X again with same args → repeats (loop)
@@ -126,10 +126,12 @@ RIGHT:  pty_spawn "gh pr checks --watch" → pty_read on completion notification
 
 **The orchestrator MUST maximize parallel task dispatch. Aggressive fan-out is the #1 lever for velocity.**
 
-Fan-out targets:
-- **5-15 parallel coder tasks** for feature implementation (one per vertical slice)
-- **2-3 parallel explore tasks** for codebase understanding (one per area)
-- **1 advisor task** at a time for strategic decisions
+Fan-out targets by specialist type (mix freely in the same wave):
+- **coder:** 5-15 parallel tasks for implementation slices
+- **explore:** 2-5 parallel tasks for codebase understanding (one per area/module)
+- **designer:** 1-3 parallel tasks for UI/UX work
+- **advisor:** 1 task at a time for strategic decisions (coder can also delegate to advisor mid-task)
+- **observer:** 1-3 parallel tasks for visual analysis, before/after comparisons
 
 Rules:
 1. **Within a wave, launch ALL independent slices simultaneously.** Never wait for Slice A before launching Slice B if they don't share code.
@@ -138,16 +140,16 @@ Rules:
 4. **Fan-out first, review second.** Launch everything in parallel, then review all outputs together.
 
 ```
-# GOOD: Fan out 8 slices simultaneously
+# GOOD: Fan out mixed specialists simultaneously
+task(description="Explore auth module", prompt="...", agent="explore")
+task(description="Explore user model", prompt="...", agent="explore")
 task(description="Slice 1: auth flow", prompt="...", agent="coder")
 task(description="Slice 2: user profile", prompt="...", agent="coder")
 task(description="Slice 3: settings page", prompt="...", agent="coder")
-task(description="Slice 4: dashboard", prompt="...", agent="coder")
-task(description="Slice 5: notifications", prompt="...", agent="coder")
-task(description="Slice 6: search", prompt="...", agent="coder")
-task(description="Slice 7: pagination", prompt="...", agent="coder")
-task(description="Slice 8: error handling", prompt="...", agent="coder")
-# All 8 launch at once — 8x faster than sequential
+task(description="Slice 4: dashboard styling", prompt="...", agent="designer")
+task(description="Slice 5: notifications logic", prompt="...", agent="coder")
+task(description="Before/after comparison", prompt="...", agent="observer")
+# All launch at once — each uses the right specialist
 
 # BAD: Sequential — never do this
 task(description="Slice 1", ...) → wait → task(description="Slice 2", ...) → wait → ...
