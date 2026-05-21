@@ -36,7 +36,7 @@ Decompose into vertical tracer-bullet slices from the PRD's acceptance criteria.
 
 ### Small-Change Mode (after interview for <1 day work)
 
-Lightweight decomposition into 2-3 vertical slices. No PRD needed — the interview spec is the spec.
+Lightweight decomposition into 3+ vertical slices for maximum parallelism. No PRD needed — the interview spec is the spec.
 
 **Decision rule:** If a PRD exists → Feature Mode. Otherwise → Small-Change Mode.
 
@@ -90,32 +90,41 @@ task(description="Slice 2: Complete + delete todo", prompt="...", agent="coder")
 task(description="Slice 3: Filter + clear completed", prompt="...", agent="coder")
 ```
 
-**Maximize wave width.** If a wave has only 1 slice, look harder for decomposition or combine it with an adjacent wave. Every wave should have ≥2 slices unless the critical path genuinely has no parallelism.
+**Maximize wave width.** If a wave has only 1 slice, look harder for decomposition or combine it with an adjacent wave. Every wave should have ≥3 slices unless the critical path genuinely has no parallelism. **Fan out aggressively — 5-15 parallel coder tasks per wave is the target.** More parallelism = faster delivery.
 
 ### Small-Change Decomposition
 
 For work without a PRD, use the same vertical-slice approach but lighter:
 
-1. Identify 2-3 user-facing behaviors from the interview spec
+1. Identify ALL user-facing behaviors from the interview spec (aim for maximum decomposition)
 2. First behavior = tracer bullet (proves the path)
 3. Remaining behaviors = parallel slices after tracer
 
-**Minimum decomposition:** Even a "simple" change should produce ≥2 slices. If you can't decompose, the change is probably trivial (use the Trivial path instead).
+**Minimum decomposition:** Even a "simple" change should produce ≥3 slices. If you can't decompose into 3+ slices, the change is probably trivial (use the Trivial path instead). **Target 5-15 slices for features** — more parallelism = faster delivery.
 
 ## Parallel Coder Delegation
 
 When launching a wave, send all wave slices to `coder` agents simultaneously:
 
 ```
-# Good: parallel launch
+# Good: fan out maximally — launch ALL independent slices simultaneously
 task(description="Slice 2: Complete todo", prompt="...", agent="coder")
 task(description="Slice 3: Delete todo", prompt="...", agent="coder")
+task(description="Slice 4: Filter todos", prompt="...", agent="coder")
+task(description="Slice 5: Clear completed", prompt="...", agent="coder")
+task(description="Slice 6: Edit todo", prompt="...", agent="coder")
+# The more slices in parallel, the faster the total completion time
 
 # Bad: sequential — never do this
 task(...) → wait → task(...) → wait → ...
 ```
 
 Each `coder` prompt must be **fully self-contained**: include file paths, requirements, acceptance criteria, and any context the coder needs. The coder has no shared context with you.
+
+**Fan-out intensity targets:**
+- Feature (PRD): 5-15 parallel slices per wave
+- Small change: 3-5 parallel slices
+- Single-slice waves are a code smell — decompose harder or combine waves
 
 ## Workflow
 

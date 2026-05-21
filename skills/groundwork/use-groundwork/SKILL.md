@@ -94,7 +94,7 @@ Temperature defaults are set automatically by the plugin. Override in `opencode.
 
 ### Why delegation matters
 
-1. **Velocity**: Launch parallel coder tasks — 3 tasks in parallel finish 3x faster than doing them sequentially yourself
+1. **Velocity**: Fan out aggressively — launch 5-15 parallel coder tasks. More parallelism = faster delivery. Sequential work is the #1 time waste
 2. **Quality**: Each agent is specialized — coder writes better code, explore maps faster, advisor thinks deeper, designer has visual taste, observer sees details you'd miss
 3. **Context**: You preserve your context window for orchestration decisions instead of filling it with code details
 4. **Model diversity**: Different agents use different models — designer uses kimi for UI taste, advisor uses gpt-5.4 for reasoning, coder uses gpt-5.4-mini for speed
@@ -105,13 +105,13 @@ Temperature defaults are set automatically by the plugin. Override in `opencode.
 WRONG:  Classify → read files → write code → run tests → review → advisor-gate
         (orchestrator does everything sequentially)
 
-RIGHT:  Classify → delegate exploration to explore → delegate coding to 3x coder in parallel
+RIGHT:  Classify → delegate exploration to explore → fan out coding to 5-15x coder in parallel
         → delegate visual review to observer → review outputs → advisor-gate
-        (orchestrator delegates, reviews, orchestrates)
+        (orchestrator delegates, reviews, orchestrates — MAXIMIZE fan-out width)
 
-RIGHT:  UI feature → delegate styling to designer (kimi model) → delegate logic to coder
+RIGHT:  UI feature → delegate styling to designer → delegate logic to 3x coder in parallel
         → delegate before/after comparison to observer → advisor-gate
-        (each specialist uses its best model)
+        (fan out ALL independent slices simultaneously, never wait sequentially)
 
 CODER TOOL LOOP:
 WRONG:  Coder calls tool X → gets result → calls tool X again with same args → repeats (loop)
@@ -120,6 +120,37 @@ RIGHT:  Loop detector catches it → sends nudge → coder takes different appro
 CI BABYSITTING:
 WRONG:  bash "gh pr checks" → bash "gh pr checks" → bash "gh pr checks" (polling loop)
 RIGHT:  pty_spawn "gh pr checks --watch" → pty_read on completion notification
+```
+
+### Fan-Out Maximization
+
+**The orchestrator MUST maximize parallel task dispatch. Aggressive fan-out is the #1 lever for velocity.**
+
+Fan-out targets:
+- **5-15 parallel coder tasks** for feature implementation (one per vertical slice)
+- **2-3 parallel explore tasks** for codebase understanding (one per area)
+- **1 advisor task** at a time for strategic decisions
+
+Rules:
+1. **Within a wave, launch ALL independent slices simultaneously.** Never wait for Slice A before launching Slice B if they don't share code.
+2. **A wave with only 1 slice is a missed opportunity.** Look harder for decomposition or combine with adjacent waves.
+3. **Sequential execution is only for dependencies.** If Slice B needs output from Slice A, they're in different waves. Everything else is parallel.
+4. **Fan-out first, review second.** Launch everything in parallel, then review all outputs together.
+
+```
+# GOOD: Fan out 8 slices simultaneously
+task(description="Slice 1: auth flow", prompt="...", agent="coder")
+task(description="Slice 2: user profile", prompt="...", agent="coder")
+task(description="Slice 3: settings page", prompt="...", agent="coder")
+task(description="Slice 4: dashboard", prompt="...", agent="coder")
+task(description="Slice 5: notifications", prompt="...", agent="coder")
+task(description="Slice 6: search", prompt="...", agent="coder")
+task(description="Slice 7: pagination", prompt="...", agent="coder")
+task(description="Slice 8: error handling", prompt="...", agent="coder")
+# All 8 launch at once — 8x faster than sequential
+
+# BAD: Sequential — never do this
+task(description="Slice 1", ...) → wait → task(description="Slice 2", ...) → wait → ...
 ```
 
 The wrong pattern is the most common failure mode. It feels natural to "just do it" but it sacrifices velocity and quality.
@@ -236,7 +267,7 @@ implement directly → invoke skill "advisor-gate"
 
 **Standard small change** (any small change that doesn't meet ALL trivial criteria):
 ```
-invoke skill "interview" (quick: 3-4 questions) → invoke skill "bdd-implement" (decompose into 2-3 parallel tasks) → invoke skill "advisor-gate"
+invoke skill "interview" (quick: 3-4 questions) → invoke skill "bdd-implement" (decompose into max parallel tasks) → invoke skill "advisor-gate"
 ```
 - This is the DEFAULT small-change path. Use it unless the change is truly single-file, ≤10 lines, no new behavior.
 - Interview output IS the spec — no file artifact needed
@@ -398,7 +429,7 @@ digraph flow {
   "Small change path" -> "Standard SC" [label="needs design"];
   "Trivial SC" -> "implement directly";
   "Standard SC" -> "invoke skill interview (quick: 3-4 Q)";
-  "invoke skill interview (quick: 3-4 Q)" -> "invoke skill bdd-implement (2-3 parallel tasks)";
+  "invoke skill interview (quick: 3-4 Q)" -> "invoke skill bdd-implement (max parallel tasks)";
   "invoke skill bdd-implement (2-3 parallel tasks)" -> "invoke skill advisor-gate";
 
   "Feature path" -> "invoke skill interview (full: 8-10 Q)";
