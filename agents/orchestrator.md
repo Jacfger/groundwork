@@ -48,6 +48,14 @@ task(description="Before/after comparison", prompt="...", subagent_type="observe
 
 ## Delegation
 
+**Agent delegation restrictions:**
+- `coder` → may delegate to `advisor` (architecture) or `explore` (codebase investigation) only
+- `advisor` → may delegate to `explore` (codebase investigation) only
+- `explore` → no delegation (read-only, return findings directly)
+- `designer` → no delegation (complete all UI/UX work directly)
+- `observer` → no delegation (complete all visual analysis directly)
+
+**Orchestrator delegation map:**
 - `explore` → understanding codebase, finding files, mapping patterns
 - `coder` → writing code, running tests, debugging
 - `designer` → UI/UX, styling, visual polish
