@@ -66,6 +66,7 @@ Each hypothesis must be **falsifiable**: "If <X> is the cause, then <changing Y>
 **Parallel hypothesis testing:** Launch the top 2-3 hypotheses as **parallel exploration tasks** when they probe different parts of the system:
 ```
 # Good: parallel probes of independent hypotheses
+# Both orchestrator and coder can delegate to explore
 task(description="Test hypothesis A: auth middleware", prompt="Check if the auth middleware strips the X-Token header when...", subagent_type="explore")
 task(description="Test hypothesis B: race condition in cache", prompt="Check if the cache invalidation runs before the response...", subagent_type="explore")
 ```
@@ -95,9 +96,15 @@ If no correct seam exists, that itself is the finding — flag for architecture 
 # Write the failing test first, then apply the fix in the same task
 # The test and fix touch the same files, so they must be in the same task
 # But you CAN parallelize: fix implementation + feedback loop verification
+```
+
+**For orchestrator:** Delegate the fix to a `coder` agent and verification to `explore`:
+```
 task(description="Write regression test + apply fix", prompt="...", subagent_type="coder")
 task(description="Verify feedback loop passes after fix", prompt="...", subagent_type="explore")  # runs after fix task
 ```
+
+**For coder:** Implement the fix and regression test yourself. You can delegate codebase verification to `explore` via `task(subagent_type="explore", ...)`.
 
 **Sequence:**
 1. Minimise reproduction → write failing test → watch it fail

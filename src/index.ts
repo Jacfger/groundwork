@@ -5,26 +5,15 @@ import { fileURLToPath } from 'node:url'
 import type { PluginInput } from '@opencode-ai/plugin'
 
 import { manager } from './lib/singletons.js'
-import { persistence } from './lib/singletons.js'
 import { LoopMonitor } from './lib/loop-monitor.js'
 
 export { resolvePromptAppend } from './lib/prompt-resolver.js'
 
-import { getBootstrapContent, extractAndStripFrontmatter } from './lib/skills.js'
+import { getBootstrapContent, getBootstrapForAgent, extractAndStripFrontmatter } from './lib/skills.js'
 import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from './lib/handoff.js'
 
-import { createBackgroundTaskTool } from './tools/background-task.js'
-import { createBackgroundWaitTool } from './tools/background-wait.js'
-import { createBackgroundOutputTool } from './tools/background-output.js'
-import { createBackgroundListTool } from './tools/background-list.js'
-import { createBackgroundCancelTool } from './tools/background-cancel.js'
-import { createBackgroundInputTool } from './tools/background-input.js'
-import { createBackgroundStatusTool } from './tools/background-status.js'
-import { createBackgroundStreamTool } from './tools/background-stream.js'
 import { createHandoffSessionTool } from './tools/handoff-session.js'
 import { createSetGoalTool } from './tools/set-goal.js'
-// import { createReadSessionTool } from './tools/read-session.js'
-// import { createRobustReadTool } from './tools/robust-read.js'
 import type { ToolDeps } from './tools/deps.js'
 import { readGoal, goalReminder } from './lib/goal.js'
 
@@ -92,7 +81,7 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       }
       try {
         const gitignorePath = path.join(directory, '.gitignore')
-        const OPENCODE_IGNORE = '.opencode/background-tasks/\n.opencode/goal.json'
+        const OPENCODE_IGNORE = '.opencode/goal.json'
         let gitignore = ''
         try { gitignore = await fsPromises.readFile(gitignorePath, 'utf8') } catch {}
         if (!gitignore.includes(OPENCODE_IGNORE)) {
@@ -103,10 +92,16 @@ export const GroundworkPlugin = async (input: PluginInput) => {
     },
 
     'experimental.chat.messages.transform': async (_input: any, output: any) => {
-      const bootstrap = getBootstrapContent()
-      if (!bootstrap || !output.messages.length) return
+      if (!output.messages.length) return
       const firstUser = output.messages.find((m: any) => m.info.role === 'user')
       if (!firstUser || !firstUser.parts.length) return
+
+      // Select bootstrap based on agent type
+      const agent = firstUser.info?.agent
+      const bootstrap = agent
+        ? getBootstrapForAgent(agent)
+        : getBootstrapContent()
+      if (!bootstrap) return
 
       // Inject bootstrap into first user message (once)
       if (!firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
@@ -129,23 +124,12 @@ export const GroundworkPlugin = async (input: PluginInput) => {
     },
 
     tool: {
-      background_task: createBackgroundTaskTool(deps),
-      background_wait: createBackgroundWaitTool(deps),
-      background_output: createBackgroundOutputTool(deps),
-      background_list: createBackgroundListTool(deps),
-      background_cancel: createBackgroundCancelTool(deps),
-      background_input: createBackgroundInputTool(deps),
-      background_status: createBackgroundStatusTool(deps),
-      background_stream: createBackgroundStreamTool(deps),
       handoff_session: createHandoffSessionTool(deps),
       set_goal: createSetGoalTool(deps),
-//      read_session: createReadSessionTool(deps),
-//      read: createRobustReadTool(deps),
     },
 
     event: async ({ event }: { event: any }) => {
       loopMonitor.handleEvent(event)
-      manager.handleEvent(event)
       if (event.type === 'session.deleted') {
         const id = event.properties?.info?.id
         if (typeof id === 'string') handoffProcessedSessions.delete(id)
@@ -153,7 +137,6 @@ export const GroundworkPlugin = async (input: PluginInput) => {
     },
 
     'chat.message': async (_input: any, output: any) => {
-      manager.injectPendingNotifications(output.parts, _input.sessionID)
       const sessionID = output.message.sessionID ?? _input.sessionID
       if (handoffProcessedSessions.has(sessionID)) return
       const text = output.parts
@@ -177,14 +160,7 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       })
     },
 
-    'experimental.session.compacting': async ({ sessionID }: { sessionID: string }, output: { context: string[]; prompt?: string }) => {
-      try {
-        const ctx = manager.compactionContext(sessionID)
-        if (ctx) {
-          output.context.push(JSON.stringify(ctx))
-        }
-      } catch {}
-    },
+
   }
 }
 

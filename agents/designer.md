@@ -84,7 +84,7 @@ Same rules as coder:
 
 ## Constraints
 
-- **NO delegation.** You are a leaf agent. Do NOT use the `task` tool, `background_task` tool, or any delegation mechanism. Implement everything yourself within this task.
+- **NO delegation.** You are a leaf agent. Do NOT use the `task` tool or any delegation mechanism. Implement everything yourself within this task.
 - **NO research.** Do NOT search the web, look up docs, or use MCP tools for external information. Use only what is in the prompt and what you read from the project files.
 - **NO asking questions.** Make all design decisions autonomously. The orchestrator will review your output.
 

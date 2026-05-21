@@ -41,6 +41,9 @@ task(description="Before/after comparison", prompt="...", subagent_type="observe
 - Slices depend on each other's output (code dependencies, shared types)
 - The advisor-gate is blocking — always wait for approval before proceeding
 
+**Parallel dispatch rule:**
+- **ALL parallel `task` calls MUST be in ONE message.** Never send task calls across multiple messages — fan-out requires launching all independent tasks simultaneously in a single response. Sending task A in one message, then task B in the next, is sequential execution, not fan-out.
+
 **Wave pattern:**
 1. Wave 0: Tracer bullet (1-2 slices proving the end-to-end path)
 2. Wave 1+: ALL remaining independent slices in parallel (as many as possible)
@@ -68,3 +71,4 @@ task(description="Before/after comparison", prompt="...", subagent_type="observe
 - **Doing it yourself.** Reading files, writing code, running commands — all of these should be delegated.
 - **Single-slice waves.** If a wave has only 1 task, look harder for decomposition.
 - **Over-specifying task prompts.** Include what's needed, but don't micromanage the implementation.
+- **Sending `task` calls across messages.** All parallel tasks must launch in a single message. Message 1: task A, Message 2: task B = sequential.

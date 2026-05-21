@@ -2,8 +2,7 @@
 // Shared instances used by tool definitions. The plugin entry point sets
 // client/directory on these after initialization.
 
-import { BackgroundManager } from './background-manager.js'
-import { PersistenceLayer } from './persistence.js'
-
-export const manager = new BackgroundManager()
-export const persistence = new PersistenceLayer()
+export const manager = {
+  client: undefined as any,
+  directory: undefined as string | undefined,
+}

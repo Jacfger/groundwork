@@ -22,24 +22,68 @@ export function extractAndStripFrontmatter(content: string): { frontmatter: Reco
   return { frontmatter, content: body }
 }
 
-let bootstrapContentCache: string | null | undefined
+const bootstrapContentCache = new Map<string, string | null>()
 
-export function getBootstrapContent(): string | null {
-  if (bootstrapContentCache !== undefined) return bootstrapContentCache
+export function getBootstrapForAgent(agent: string): string | null {
+  const cached = bootstrapContentCache.get(agent)
+  if (cached !== undefined) return cached
 
-  const skillPath = path.join(groundworkSkillsDir, 'use-groundwork', 'SKILL.md')
-  if (!existsSync(skillPath)) {
-    bootstrapContentCache = null
-    return null
+  const universalPath = path.join(groundworkSkillsDir, 'use-groundwork', 'bootstrap-universal.md')
+  let universalContent = ''
+  let fallbackContent = ''
+  let usingFallback = false
+
+  if (existsSync(universalPath)) {
+    const fullContent = readFileSync(universalPath, 'utf8')
+    const { content } = extractAndStripFrontmatter(fullContent)
+    universalContent = content
+  } else {
+    // Fallback: load the full SKILL.md (legacy behavior during migration)
+    const skillPath = path.join(groundworkSkillsDir, 'use-groundwork', 'SKILL.md')
+    if (!existsSync(skillPath)) {
+      bootstrapContentCache.set(agent, null)
+      return null
+    }
+    const fullContent = readFileSync(skillPath, 'utf8')
+    const { content } = extractAndStripFrontmatter(fullContent)
+    fallbackContent = content
+    usingFallback = true
   }
-  const fullContent = readFileSync(skillPath, 'utf8')
-  const { content } = extractAndStripFrontmatter(fullContent)
-  bootstrapContentCache = `<EXTREMELY_IMPORTANT>
+
+  let agentContent = ''
+  if (agent === 'orchestrator') {
+    const agentPath = path.join(groundworkSkillsDir, 'use-groundwork', 'bootstrap-orchestrator.md')
+    if (existsSync(agentPath)) {
+      const fullContent = readFileSync(agentPath, 'utf8')
+      const { content } = extractAndStripFrontmatter(fullContent)
+      agentContent = content
+    }
+  } else if (agent === 'coder') {
+    const agentPath = path.join(groundworkSkillsDir, 'use-groundwork', 'bootstrap-coder.md')
+    if (existsSync(agentPath)) {
+      const fullContent = readFileSync(agentPath, 'utf8')
+      const { content } = extractAndStripFrontmatter(fullContent)
+      agentContent = content
+    }
+  }
+
+  const bodyContent = usingFallback
+    ? fallbackContent
+    : [universalContent, agentContent].filter(Boolean).join('\n\n')
+
+  const bootstrap = `<EXTREMELY_IMPORTANT>
 You have groundwork workflow skills.
 
 **IMPORTANT: The use-groundwork skill content is included below. It is ALREADY LOADED - you are currently following it. Do NOT use the skill tool to load "use-groundwork" again.**
 
-${content}
+${bodyContent}
 </EXTREMELY_IMPORTANT>`
-  return bootstrapContentCache
+
+  bootstrapContentCache.set(agent, bootstrap)
+  return bootstrap
+}
+
+// Backward-compatible alias for legacy callers
+export function getBootstrapContent(): string | null {
+  return getBootstrapForAgent('orchestrator')
 }

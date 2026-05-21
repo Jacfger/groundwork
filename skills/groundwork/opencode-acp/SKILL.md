@@ -10,12 +10,12 @@ Control another OpenCode instance via ACP (HTTP-based Agent Client Protocol). Su
 ## Architecture
 
 ```
-Your session (orchestrator)
+Your session (calling agent)
   ├── pty_spawn → ACP server (opencode acp --port 9090)
   └── bash → opencode run --attach http://localhost:9090 ...
 ```
 
-The ACP server is a **headless OpenCode instance** — it loads plugins (including groundwork), has its own session context, and processes prompts autonomously. Your orchestrator sends prompts and reads responses.
+The ACP server is a **headless OpenCode instance** — it loads plugins (including groundwork), has its own session context, and processes prompts autonomously. The calling agent sends prompts and reads responses.
 
 ## Lifecycle
 

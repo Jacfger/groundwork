@@ -173,4 +173,157 @@ describe("LoopMonitor", () => {
     const call = client.session.prompt.mock.calls[0]
     expect(call[0].body.parts[0].text).toContain("Custom:")
   })
+
+  test("detects tool loops across multiple messages", () => {
+    const client = createMockClient()
+    const monitor = new LoopMonitor(client, {
+      enabled: true,
+      max_tool_repeats: 3,
+      max_nudges: 2,
+    })
+
+    function toolPartUpdatedEvent(sessionID: string, partID: string, messageID: string, tool: string, input: any) {
+      return {
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: partID,
+            sessionID,
+            messageID,
+            type: "tool",
+            tool,
+            state: { input },
+          },
+        },
+      }
+    }
+
+    function messageUpdatedEvent(sessionID: string, messageID: string) {
+      return {
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: { id: messageID },
+        },
+      }
+    }
+
+    // Simulate loop: tool call in msg-1, message update msg-2, tool call in msg-3, message update msg-4, tool call in msg-5
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p1", "msg-1", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-2"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p2", "msg-3", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-4"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p3", "msg-5", "test_tool", { query: "hello" }))
+
+    // With the bug, toolCallHistory gets cleared on each message.updated, so we never reach 3 repeats
+    // This assertion should fail with the current buggy code
+    expect(client.session.prompt).toHaveBeenCalled()
+  })
+
+  test("aborts cross-message tool loop after nudges exhausted", () => {
+    const client = createMockClient()
+    const monitor = new LoopMonitor(client, {
+      enabled: true,
+      max_tool_repeats: 3,
+      max_nudges: 1,
+    })
+
+    function toolPartUpdatedEvent(sessionID: string, partID: string, messageID: string, tool: string, input: any) {
+      return {
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: partID,
+            sessionID,
+            messageID,
+            type: "tool",
+            tool,
+            state: { input },
+          },
+        },
+      }
+    }
+
+    function messageUpdatedEvent(sessionID: string, messageID: string) {
+      return {
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: { id: messageID },
+        },
+      }
+    }
+
+    // First loop: 3 identical calls across messages → nudge
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p1", "msg-1", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-2"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p2", "msg-3", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-4"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p3", "msg-5", "test_tool", { query: "hello" }))
+
+    expect(client.session.prompt).toHaveBeenCalledTimes(1)
+    expect(client.session.abort).toHaveBeenCalledTimes(0)
+
+    // Second loop: 3 more identical calls across messages → abort (nudges exhausted)
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-6"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p4", "msg-7", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-8"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p5", "msg-9", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-10"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p6", "msg-11", "test_tool", { query: "hello" }))
+
+    expect(client.session.prompt).toHaveBeenCalledTimes(1) // no additional nudge
+    expect(client.session.abort).toHaveBeenCalledTimes(1)
+  })
+
+  test("different tool breaks cross-message loop streak", () => {
+    const client = createMockClient()
+    const monitor = new LoopMonitor(client, {
+      enabled: true,
+      max_tool_repeats: 3,
+      max_nudges: 2,
+    })
+
+    function toolPartUpdatedEvent(sessionID: string, partID: string, messageID: string, tool: string, input: any) {
+      return {
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: partID,
+            sessionID,
+            messageID,
+            type: "tool",
+            tool,
+            state: { input },
+          },
+        },
+      }
+    }
+
+    function messageUpdatedEvent(sessionID: string, messageID: string) {
+      return {
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: { id: messageID },
+        },
+      }
+    }
+
+    // Two identical calls, then a different tool, then another identical call
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p1", "msg-1", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-2"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p2", "msg-3", "test_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-4"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p3", "msg-5", "other_tool", { query: "hello" }))
+    monitor.handleEvent(messageUpdatedEvent("s1", "msg-6"))
+    monitor.handleEvent(toolPartUpdatedEvent("s1", "p4", "msg-7", "test_tool", { query: "hello" }))
+
+    // Streak is broken by other_tool, so no loop detected
+    expect(client.session.prompt).not.toHaveBeenCalled()
+    expect(client.session.abort).not.toHaveBeenCalled()
+  })
 })

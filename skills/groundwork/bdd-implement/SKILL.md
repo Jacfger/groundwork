@@ -82,13 +82,15 @@ Slice N: <behavior name>
 
 ### Wave Execution
 
-Within a wave, launch ALL slices in parallel via `task` with `agent: "coder"`:
+**For orchestrator:** Within a wave, launch ALL slices in parallel via `task` with `subagent_type="coder"`:
 
 ```
 # Wave 1: two independent slices
 task(description="Slice 2: Complete + delete todo", prompt="...", subagent_type="coder")
 task(description="Slice 3: Filter + clear completed", prompt="...", subagent_type="coder")
 ```
+
+**For coder:** You may receive one or more slices as individual tasks. Implement each slice fully (types, logic, surface, test) in one pass.
 
 **Maximize wave width.** If a wave has only 1 slice, look harder for decomposition or combine it with an adjacent wave. Every wave should have ≥3 slices unless the critical path genuinely has no parallelism. **Fan out aggressively — 5-15 parallel coder tasks per wave is the target.** More parallelism = faster delivery.
 
@@ -102,12 +104,14 @@ For work without a PRD, use the same vertical-slice approach but lighter:
 
 **Minimum decomposition:** Even a "simple" change should produce ≥3 slices. If you can't decompose into 3+ slices, the change is probably trivial (use the Trivial path instead). **Target 5-15 slices for features** — more parallelism = faster delivery.
 
-## Parallel Coder Delegation
+## Parallel Coder Delegation (Orchestrator Only)
+
+> **Note:** Fan-out targets and wave decomposition are for the orchestrator. Coder agents receive individual slices and implement them end-to-end.
 
 When launching a wave, send all wave slices to `coder` agents simultaneously:
 
 ```
-# Good: fan out maximally — launch ALL independent slices simultaneously
+# Orchestrator: fan out maximally — launch ALL independent slices simultaneously
 task(description="Slice 2: Complete todo", prompt="...", subagent_type="coder")
 task(description="Slice 3: Delete todo", prompt="...", subagent_type="coder")
 task(description="Slice 4: Filter todos", prompt="...", subagent_type="coder")
@@ -147,7 +151,9 @@ Set the first `todowrite` item to the feature goal derived from acceptance crite
 
 ### 4. Execute Waves
 
-Launch Wave 0 (tracer), wait for completion, verify, then launch Wave 1, etc. After each wave, update `todowrite` state.
+**For orchestrator:** Launch Wave 0 (tracer), wait for completion, verify, then launch Wave 1, etc. After each wave, update `todowrite` state.
+
+**For coder:** Implement the slice(s) assigned to you fully (types, logic, surface, test) in one pass. Report completion with what was implemented and any blockers.
 
 ### 5. Capture After State
 

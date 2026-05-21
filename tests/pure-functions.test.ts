@@ -4,7 +4,6 @@ import { parseFileReferences, isBinaryBuffer, formatTranscript, HANDOFF_COMMAND 
 import { extractAndStripFrontmatter } from '../src/lib/skills.js'
 import { resolvePromptAppend } from '../src/lib/prompt-resolver.js'
 import { formatFileChanges, diffFileSnapshots } from '../src/lib/snapshot.js'
-import { formatTaskStatus } from '../src/lib/task-formatting.js'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -417,65 +416,4 @@ describe('formatFileChanges', () => {
   })
 })
 
-// ─── formatTaskStatus ────────────────────────────────────────────────────
 
-describe('formatTaskStatus', () => {
-  test('pending task shows queued', () => {
-    const task = { id: 't1', status: 'pending', description: 'test task', queuedAt: new Date(), agent: 'coder' }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('t1')
-    expect(result).toContain('queued')
-  })
-
-  test('running task shows running', () => {
-    const task = { id: 't2', status: 'running', description: 'active task', startedAt: new Date(), agent: 'coder' }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('running')
-  })
-
-  test('completed task shows duration', () => {
-    const task = {
-      id: 't3', status: 'completed', description: 'done task', agent: 'coder',
-      startedAt: new Date('2024-01-01T00:00:00Z'),
-      completedAt: new Date('2024-01-01T00:00:05Z')
-    }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('completed')
-    expect(result).toContain('5.0s')
-  })
-
-  test('failed task shows failed', () => {
-    const task = {
-      id: 't4', status: 'failed', description: 'bad task', agent: 'coder',
-      error: 'something went wrong',
-      startedAt: new Date('2024-01-01T00:00:00Z'),
-      completedAt: new Date('2024-01-01T00:00:02Z')
-    }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('failed')
-  })
-
-  test('cancelled task', () => {
-    const task = { id: 't5', status: 'cancelled', description: 'stopped task', agent: 'coder' }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('cancelled')
-  })
-
-  test('interrupted task', () => {
-    const task = { id: 't6', status: 'interrupt', description: 'interrupted task', agent: 'coder' }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('interrupted')
-  })
-
-  test('waiting task', () => {
-    const task = { id: 't7', status: 'waiting', description: 'waiting task', agent: 'coder' }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('waiting')
-  })
-
-  test('error status maps to failed', () => {
-    const task = { id: 't8', status: 'error', description: 'error task', agent: 'coder', startedAt: new Date() }
-    const result = formatTaskStatus(task)
-    expect(result).toContain('failed')
-  })
-})

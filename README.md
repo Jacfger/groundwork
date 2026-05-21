@@ -21,14 +21,6 @@ Restart OpenCode. Skills auto-discover.
 
 | Tool | Purpose |
 |------|---------|
-| `background_task` | Launch parallel background tasks |
-| `background_wait` | Block until task completes |
-| `background_output` | Get task result |
-| `background_list` | List active tasks |
-| `background_cancel` | Cancel task(s) |
-| `background_input` | Send steering/interrupt to running task |
-| `background_status` | Task health info |
-| `background_stream` | Partial output from running task |
 | `handoff_session` | Create focused continuation prompt |
 
 ## Skills
@@ -74,10 +66,9 @@ Temperature defaults are set automatically. Override in agent config if needed.
 
 1. Issue-type routing: bug → diagnose, small change → interview + bdd-implement, feature → interview + create-prd + bdd-implement
 2. Advisor gate before declaring done
-3. Background tasks for parallel work
-4. No PRD commits to git
-5. PTY tools for long-running commands
-6. Interview before PRD — understanding before synthesis
+3. No PRD commits to git
+4. PTY tools for long-running commands
+5. Interview before PRD — understanding before synthesis
 
 ## Dev
 

@@ -24,6 +24,7 @@ interface SessionLoopState {
   lastMessageID: string
   toolCallHistory: ToolCallRecord[]
   toolLoopAttempt: number
+  seenToolPartIDs: Set<string>
 }
 
 export interface LoopMonitorOptions {
@@ -59,6 +60,7 @@ export class LoopMonitor {
         lastMessageID: "",
         toolCallHistory: [],
         toolLoopAttempt: 0,
+        seenToolPartIDs: new Set(),
       }
       this.sessions.set(sessionID, state)
     }
@@ -105,8 +107,8 @@ export class LoopMonitor {
       if (typeof sessionID === "string" && typeof messageID === "string") {
         const state = this.sessions.get(sessionID)
         if (state && messageID !== state.lastMessageID) {
-          state.toolCallHistory = []
-          state.toolLoopAttempt = 0
+          // Don't clear toolCallHistory or toolLoopAttempt — loops can span multiple messages
+          state.lastMessageID = messageID
         }
       }
     }
@@ -153,15 +155,33 @@ export class LoopMonitor {
 
     if (part.type === "tool") {
       const state = this.getSession(sessionID)
+      const partID: string = part.id ?? ""
+      const partState: string = part.state?.type ?? ""
 
       if (part.messageID && part.messageID !== state.lastMessageID) {
-        state.toolCallHistory = []
-        state.toolLoopAttempt = 0
+        // Update tracking but don't clear history or attempt — loops can span messages
         state.lastMessageID = part.messageID
+      }
+
+      // Deduplicate by part ID — a single tool invocation generates
+      // multiple message.part.updated events as its state transitions
+      // (pending → running → completed). Only count each part once,
+      // and only when it reaches a terminal state (completed/failed).
+      if (partID && state.seenToolPartIDs.has(partID)) return
+      if (partID && (partState === "completed" || partState === "failed")) {
+        state.seenToolPartIDs.add(partID)
+      } else if (partID) {
+        // Non-terminal state — don't add to history yet, but don't mark as seen either
+        return
       }
 
       const toolName: string = part.tool ?? ""
       const toolInput = this.normalizeToolInput(part.state?.input)
+
+      // Skip entries with empty input — they cannot be meaningfully
+      // compared. Multiple different tool calls with missing/undefined input
+      // would all normalize to "" and falsely trigger loop detection.
+      if (!toolInput) return
 
       state.toolCallHistory.push({ name: toolName, input: toolInput })
       if (state.toolCallHistory.length > 4) {
