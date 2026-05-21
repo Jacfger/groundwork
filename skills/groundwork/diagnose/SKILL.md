@@ -66,8 +66,8 @@ Each hypothesis must be **falsifiable**: "If <X> is the cause, then <changing Y>
 **Parallel hypothesis testing:** Launch the top 2-3 hypotheses as **parallel exploration tasks** when they probe different parts of the system:
 ```
 # Good: parallel probes of independent hypotheses
-task(description="Test hypothesis A: auth middleware", prompt="Check if the auth middleware strips the X-Token header when...", agent="explore")
-task(description="Test hypothesis B: race condition in cache", prompt="Check if the cache invalidation runs before the response...", agent="explore")
+task(description="Test hypothesis A: auth middleware", prompt="Check if the auth middleware strips the X-Token header when...", subagent_type="explore")
+task(description="Test hypothesis B: race condition in cache", prompt="Check if the cache invalidation runs before the response...", subagent_type="explore")
 ```
 **Only parallelize when hypotheses are independent.** If Hypothesis B depends on Hypothesis A being wrong, test A first.
 
@@ -95,8 +95,8 @@ If no correct seam exists, that itself is the finding — flag for architecture 
 # Write the failing test first, then apply the fix in the same task
 # The test and fix touch the same files, so they must be in the same task
 # But you CAN parallelize: fix implementation + feedback loop verification
-task(description="Write regression test + apply fix", prompt="...", agent="coder")
-task(description="Verify feedback loop passes after fix", prompt="...", agent="explore")  # runs after fix task
+task(description="Write regression test + apply fix", prompt="...", subagent_type="coder")
+task(description="Verify feedback loop passes after fix", prompt="...", subagent_type="explore")  # runs after fix task
 ```
 
 **Sequence:**

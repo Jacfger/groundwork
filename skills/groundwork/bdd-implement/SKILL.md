@@ -86,8 +86,8 @@ Within a wave, launch ALL slices in parallel via `task` with `agent: "coder"`:
 
 ```
 # Wave 1: two independent slices
-task(description="Slice 2: Complete + delete todo", prompt="...", agent="coder")
-task(description="Slice 3: Filter + clear completed", prompt="...", agent="coder")
+task(description="Slice 2: Complete + delete todo", prompt="...", subagent_type="coder")
+task(description="Slice 3: Filter + clear completed", prompt="...", subagent_type="coder")
 ```
 
 **Maximize wave width.** If a wave has only 1 slice, look harder for decomposition or combine it with an adjacent wave. Every wave should have ≥3 slices unless the critical path genuinely has no parallelism. **Fan out aggressively — 5-15 parallel coder tasks per wave is the target.** More parallelism = faster delivery.
@@ -108,11 +108,11 @@ When launching a wave, send all wave slices to `coder` agents simultaneously:
 
 ```
 # Good: fan out maximally — launch ALL independent slices simultaneously
-task(description="Slice 2: Complete todo", prompt="...", agent="coder")
-task(description="Slice 3: Delete todo", prompt="...", agent="coder")
-task(description="Slice 4: Filter todos", prompt="...", agent="coder")
-task(description="Slice 5: Clear completed", prompt="...", agent="coder")
-task(description="Slice 6: Edit todo", prompt="...", agent="coder")
+task(description="Slice 2: Complete todo", prompt="...", subagent_type="coder")
+task(description="Slice 3: Delete todo", prompt="...", subagent_type="coder")
+task(description="Slice 4: Filter todos", prompt="...", subagent_type="coder")
+task(description="Slice 5: Clear completed", prompt="...", subagent_type="coder")
+task(description="Slice 6: Edit todo", prompt="...", subagent_type="coder")
 # The more slices in parallel, the faster the total completion time
 
 # Bad: sequential — never do this

@@ -20,7 +20,7 @@ This skill is injected at conversation start. If you notice the core rules, rout
 5. **Always use `create-prd`** before implementation of non-trivial features (≥1 day). Never start coding a feature without an approved master PRD.
 6. **Steer via interview.** Small direction changes update the master PRD via Steer Log (see `create-prd`). Significant architectural pivots get re-interviewed and the PRD rewritten.
 7. **`advisor-gate` is MANDATORY before declaring done.** You NEVER declare a task complete without first invoking the `advisor-gate` completion gate and receiving APPROVE. No exceptions. Confidence without verification is an anti-pattern.
-8. **No self-review.** Use the **advisor** agent via `task(agent="advisor", ...)` for any technical uncertainty, not internal reasoning loops.
+8. **No self-review.** Use the **advisor** agent via `task(subagent_type="advisor", ...)` for any technical uncertainty, not internal reasoning loops.
 9. **BDD over unit tests, validation over verification.** For any visible UI change or bug, validate with actual visual inspection (XCUITest, Playwright) before and after — not just code assertions. For non-UI work, prefer integration or end-to-end tests that validate behavior over unit tests that verify implementation.
 10. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
 11. **Prefer watch/follow variants of commands.** NEVER poll-repeat a command — always use `--watch`/`--follow`/`-f`/`--tail` with PTY instead. Examples: `gh pr checks --watch`, `gh run view --log`, `jest --watch`, `kubectl get pods --watch`. **Babysitting CI is a MUST-use-PTY pattern**: spawn a PTY session for `gh pr checks --watch` or `gh run view --log-failed` and wait for it, rather than calling `gh pr checks` or `gh run view` repeatedly in bash. If a command has a `--watch` flag, use it — period. Repeated one-shot calls waste tokens and risk missing state changes.
@@ -35,15 +35,15 @@ This skill is injected at conversation start. If you notice the core rules, rout
 
 | Activity | Delegate to | Via |
 |----------|------------|-----|
-| Understanding codebase structure | `explore` agent | `task(agent="explore", ...)` |
-| Writing or editing code | `coder` agent | `task(agent="coder", ...)` |
-| Writing or editing UI/UX code | `designer` agent | `task(agent="designer", ...)` |
-| Debugging / reproduction steps | `coder` agent | `task(agent="coder", ...)` |
-| Strategic analysis / decisions | `advisor` agent | `task(agent="advisor", ...)` |
-| Escalating decisions (coder → advisor) | `advisor` agent | `task(agent="advisor", ...)` |
-| Running tests / builds | `coder` agent | `task(agent="coder", ...)` |
-| Visual analysis / screenshots | `observer` agent | `task(agent="observer", ...)` |
-| Before/after visual comparison | `observer` agent | `task(agent="observer", ...)` |
+| Understanding codebase structure | `explore` agent | `task(subagent_type="explore", ...)` |
+| Writing or editing code | `coder` agent | `task(subagent_type="coder", ...)` |
+| Writing or editing UI/UX code | `designer` agent | `task(subagent_type="designer", ...)` |
+| Debugging / reproduction steps | `coder` agent | `task(subagent_type="coder", ...)` |
+| Strategic analysis / decisions | `advisor` agent | `task(subagent_type="advisor", ...)` |
+| Escalating decisions (coder → advisor) | `advisor` agent | `task(subagent_type="advisor", ...)` |
+| Running tests / builds | `coder` agent | `task(subagent_type="coder", ...)` |
+| Visual analysis / screenshots | `observer` agent | `task(subagent_type="observer", ...)` |
+| Before/after visual comparison | `observer` agent | `task(subagent_type="observer", ...)` |
 | Interview Q&A | YOURSELF (interactive) | `question` tool |
 | Classification / routing | YOURSELF | (no delegation) |
 | Reviewing subagent output | YOURSELF | (no delegation) |
@@ -83,7 +83,7 @@ Temperature defaults are set automatically by the plugin. Override in `opencode.
 - Any strategic decision → `advisor`
 - Any UI/UX implementation or styling → `designer`
 - Any visual analysis or screenshot comparison → `observer`
-- Any architectural escalation from coder → advisor via `task(agent="advisor", ...)` (coder is the ONLY specialist agent allowed to call task, and ONLY for advisor)
+- Any architectural escalation from coder → advisor via `task(subagent_type="advisor", ...)` (coder is the ONLY specialist agent allowed to call task, and ONLY for advisor)
 
 **DO YOURSELF (only these):**
 - Classify the issue type and pick a routing path
@@ -141,14 +141,14 @@ Rules:
 
 ```
 # GOOD: Fan out mixed specialists simultaneously
-task(description="Explore auth module", prompt="...", agent="explore")
-task(description="Explore user model", prompt="...", agent="explore")
-task(description="Slice 1: auth flow", prompt="...", agent="coder")
-task(description="Slice 2: user profile", prompt="...", agent="coder")
-task(description="Slice 3: settings page", prompt="...", agent="coder")
-task(description="Slice 4: dashboard styling", prompt="...", agent="designer")
-task(description="Slice 5: notifications logic", prompt="...", agent="coder")
-task(description="Before/after comparison", prompt="...", agent="observer")
+task(description="Explore auth module", prompt="...", subagent_type="explore")
+task(description="Explore user model", prompt="...", subagent_type="explore")
+task(description="Slice 1: auth flow", prompt="...", subagent_type="coder")
+task(description="Slice 2: user profile", prompt="...", subagent_type="coder")
+task(description="Slice 3: settings page", prompt="...", subagent_type="coder")
+task(description="Slice 4: dashboard styling", prompt="...", subagent_type="designer")
+task(description="Slice 5: notifications logic", prompt="...", subagent_type="coder")
+task(description="Before/after comparison", prompt="...", subagent_type="observer")
 # All launch at once — each uses the right specialist
 
 # BAD: Sequential — never do this
@@ -175,7 +175,7 @@ Invoke the relevant skill tool BEFORE any response or action. 1% chance = invoke
 Use the builtin `task` tool to delegate work to subagents:
 
 ```
-task(description="...", prompt="...", agent="explore")  → Launch and wait for result
+task(description="...", prompt="...", subagent_type="explore")  → Launch and wait for result
 ```
 
 **Workflow:**

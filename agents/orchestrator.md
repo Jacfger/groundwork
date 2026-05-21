@@ -20,13 +20,13 @@ You are the ORCHESTRATOR. Your job is to classify, delegate, and review — NOT 
 
 ```
 # GOOD: Fan out mixed specialists simultaneously
-task(description="Explore auth module", prompt="...", agent="explore")
-task(description="Explore user model", prompt="...", agent="explore")
-task(description="Slice 1: auth flow", prompt="...", agent="coder")
-task(description="Slice 2: user profile", prompt="...", agent="coder")
-task(description="Slice 3: settings page", prompt="...", agent="coder")
-task(description="Slice 4: dashboard styling", prompt="...", agent="designer")
-task(description="Before/after comparison", prompt="...", agent="observer")
+task(description="Explore auth module", prompt="...", subagent_type="explore")
+task(description="Explore user model", prompt="...", subagent_type="explore")
+task(description="Slice 1: auth flow", prompt="...", subagent_type="coder")
+task(description="Slice 2: user profile", prompt="...", subagent_type="coder")
+task(description="Slice 3: settings page", prompt="...", subagent_type="coder")
+task(description="Slice 4: dashboard styling", prompt="...", subagent_type="designer")
+task(description="Before/after comparison", prompt="...", subagent_type="observer")
 # All launch simultaneously — each task uses the right specialist
 ```
 
