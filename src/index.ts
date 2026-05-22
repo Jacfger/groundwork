@@ -100,11 +100,16 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       }
       try {
         const gitignorePath = path.join(directory, '.gitignore')
-        const OPENCODE_IGNORE = '.opencode/goal.json'
+        const OPENCODE_IGNORE_PATTERNS = ['.opencode/goal.json', '.opencode/goals/']
         let gitignore = ''
         try { gitignore = await fsPromises.readFile(gitignorePath, 'utf8') } catch {}
-        if (!gitignore.includes(OPENCODE_IGNORE)) {
-          const newContent = gitignore ? (gitignore.endsWith('\n') ? gitignore : gitignore + '\n') + OPENCODE_IGNORE + '\n' : OPENCODE_IGNORE + '\n'
+        let newContent = gitignore
+        for (const pattern of OPENCODE_IGNORE_PATTERNS) {
+          if (!gitignore.includes(pattern)) {
+            newContent = newContent ? (newContent.endsWith('\n') ? newContent : newContent + '\n') + pattern + '\n' : pattern + '\n'
+          }
+        }
+        if (newContent !== gitignore) {
           await fsPromises.writeFile(gitignorePath, newContent, 'utf8')
         }
       } catch {}
@@ -114,6 +119,9 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       if (!output.messages.length) return
       const firstUser = output.messages.find((m: any) => m.info.role === 'user')
       if (!firstUser || !firstUser.parts.length) return
+
+      // Extract sessionID from message metadata (transform hook input is empty)
+      const sessionID = firstUser.info?.sessionID
 
       // Select bootstrap based on agent type
       const agent = firstUser.info?.agent
@@ -129,7 +137,8 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       }
 
       // Inject active goal reminder into last user message
-      const goal = readGoal(directory)
+      if (!sessionID) return
+      const goal = readGoal(directory, sessionID)
       if (goal && goal.status === 'active') {
         const lastUser = output.messages.filter((m: any) => m.info.role === 'user').pop()
         if (lastUser && lastUser.parts.length) {

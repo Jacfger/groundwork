@@ -1,8 +1,10 @@
 // ─── Goal Persistence ──────────────────────────────────────────────────────
-// Reads/writes a single active goal at .opencode/goal.json per project.
+// Reads/writes a single active goal at .opencode/goals/<sessionID>.json per
+// session. Goals are session-scoped and isolated. On first access, a legacy
+// .opencode/goal.json is auto-migrated to the current session's path.
 // Survives context compression, session restarts, and /clear.
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 
 export interface Goal {
@@ -13,14 +15,26 @@ export interface Goal {
   updatedAt: string
 }
 
-const GOAL_FILE = '.opencode/goal.json'
-
-export function goalPath(directory: string): string {
-  return path.join(directory, GOAL_FILE)
+export function goalPath(directory: string, sessionID: string): string {
+  return path.join(directory, '.opencode', 'goals', `${sessionID}.json`)
 }
 
-export function readGoal(directory: string): Goal | null {
-  const fp = goalPath(directory)
+export function migrateLegacyGoal(directory: string, sessionID: string): boolean {
+  const legacyPath = path.join(directory, '.opencode', 'goal.json')
+  if (!existsSync(legacyPath)) return false
+  const targetPath = goalPath(directory, sessionID)
+  if (existsSync(targetPath)) return false
+  const targetDir = path.join(directory, '.opencode', 'goals')
+  mkdirSync(targetDir, { recursive: true })
+  const raw = readFileSync(legacyPath, 'utf8')
+  writeFileSync(targetPath, raw, 'utf8')
+  unlinkSync(legacyPath)
+  return true
+}
+
+export function readGoal(directory: string, sessionID: string): Goal | null {
+  migrateLegacyGoal(directory, sessionID)
+  const fp = goalPath(directory, sessionID)
   if (!existsSync(fp)) return null
   try {
     const raw = readFileSync(fp, 'utf8')
@@ -30,14 +44,18 @@ export function readGoal(directory: string): Goal | null {
   }
 }
 
-export function writeGoal(directory: string, goal: Goal): void {
-  const fp = goalPath(directory)
+export function writeGoal(directory: string, sessionID: string, goal: Goal): void {
+  migrateLegacyGoal(directory, sessionID)
+  const fp = goalPath(directory, sessionID)
+  const dir = path.dirname(fp)
+  mkdirSync(dir, { recursive: true })
   goal.updatedAt = new Date().toISOString()
   writeFileSync(fp, JSON.stringify(goal, null, 2) + '\n', 'utf8')
 }
 
-export function clearGoal(directory: string): boolean {
-  const fp = goalPath(directory)
+export function clearGoal(directory: string, sessionID: string): boolean {
+  migrateLegacyGoal(directory, sessionID)
+  const fp = goalPath(directory, sessionID)
   if (!existsSync(fp)) return false
   unlinkSync(fp)
   return true
