@@ -9,7 +9,7 @@ import { LoopMonitor } from './lib/loop-monitor.js'
 
 export { resolvePromptAppend } from './lib/prompt-resolver.js'
 
-import { getBootstrapContent, getBootstrapForAgent, extractAndStripFrontmatter } from './lib/skills.js'
+import { getBootstrapContent, getBootstrapForAgent, extractAndStripFrontmatter, detectPtyPlugin, setPtyPluginAvailable } from './lib/skills.js'
 import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from './lib/handoff.js'
 
 import { createHandoffSessionTool } from './tools/handoff-session.js'
@@ -57,6 +57,8 @@ export const GroundworkPlugin = async (input: PluginInput) => {
 
   return {
     config: async (config: any) => {
+      setPtyPluginAvailable(detectPtyPlugin(config.plugin))
+
       config.skills = config.skills || {}
       config.skills.paths = config.skills.paths || []
       if (!config.skills.paths.includes(groundworkSkillsDir)) {

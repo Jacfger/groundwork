@@ -124,7 +124,9 @@ RIGHT:  Loop detector catches it → sends nudge → coder takes different appro
 
 CI BABYSITTING:
 WRONG:  bash "gh pr checks" → bash "gh pr checks" → bash "gh pr checks" (polling loop)
+<!-- PTY-ONLY-START -->
 RIGHT:  pty_spawn "gh pr checks --watch" → pty_read on completion notification
+<!-- PTY-ONLY-END -->
 ```
 
 ### Fan-Out Maximization

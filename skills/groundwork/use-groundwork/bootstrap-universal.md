@@ -8,8 +8,10 @@ These rules apply to ALL agents in the groundwork workflow.
 2. **Never commit PRDs** to git. Spec docs live in `docs/prds/` but are never staged.
 3. **`advisor-gate` is MANDATORY before declaring done.** Any agent declaring work complete must invoke the `advisor-gate` completion gate and receive APPROVE. No exceptions. Confidence without verification is an anti-pattern.
 4. **Skill tool invocation (progressive disclosure).** Load skills when routing names them — they contain instructions not present in the bootstrap. If you start direct and hit ambiguity, stop and load the matching skill. If you load a skill unnecessarily, that's fine — better to have too much structure than too little. Skills are tools, not gatekeepers.
-5. **Use PTY tools for long-running and interactive commands.** Never use `bash` for commands that serve, watch, or require interactive input. Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` instead. Examples that MUST use PTY: `npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag, `git rebase -i`, `git add -p`, `vim`, `less`, `top`, `ssh`. Rule of thumb: if the command doesn't exit on its own within ~5 seconds, use PTY.
-6. **Prefer watch/follow variants of commands.** NEVER poll-repeat a command — always use `--watch`/`--follow`/`-f`/`--tail` with PTY instead. Examples: `gh pr checks --watch`, `gh run view --log`, `jest --watch`, `kubectl get pods --watch`. **Babysitting CI is a MUST-use-PTY pattern**: spawn a PTY session for `gh pr checks --watch` or `gh run view --log-failed` and wait for it, rather than calling `gh pr checks` or `gh run view` repeatedly in bash. If a command has a `--watch` flag, use it — period. Repeated one-shot calls waste tokens and risk missing state changes.
+<!-- PTY-SECTION-START -->
+5. **Use PTY for interactive and long-running commands; use `bash` for one-shot builds.** Use `pty_spawn`/`pty_write`/`pty_read`/`pty_kill` for: interactive commands (editors, `git rebase -i`, `git add -p`, `ssh`, `top`, `less`, `vim`); watch/long-running dev commands (`npm run dev`, `npm start`, `yarn dev`, `docker-compose up`, `docker compose up`, `make watch`, any `--watch` flag); CI babysitting (`gh pr checks --watch`, `gh run view --log-failed`). Use **`bash`** for one-shot commands that exit on their own: `npm run build`, `cargo build`, `go build`, `make` (non-watch), `tsc`, test runners that finish, linters, and similar.
+6. **Prefer watch/follow variants with PTY. Never poll-repeat.** NEVER poll-repeat a command — always use `--watch`/`--follow`/`-f`/`--tail` in a PTY session instead. Examples: `gh pr checks --watch`, `gh run view --log`, `jest --watch`, `kubectl get pods --watch`. **Babysitting CI is a MUST-use-PTY pattern**: spawn a PTY for `gh pr checks --watch` or `gh run view --log-failed` and wait for it, rather than calling `gh pr checks` or `gh run view` repeatedly in bash. If a command has a `--watch` flag, use it with PTY — period. Repeated one-shot calls waste tokens and risk missing state changes.
+<!-- PTY-SECTION-END -->
 
 ## The 1% Escalation Heuristic
 
@@ -88,4 +90,3 @@ See `interview` skill for CONTEXT.md format and rules. Created and maintained du
 - Do not use worktrees (`git worktree add` etc.)
 - Do not commit PRD or spec markdown files
 - Do not run self-review in place of advisor escalation
-- Do not use `bash` for long-running/interactive commands — use `pty_spawn` and friends
