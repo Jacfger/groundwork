@@ -17,14 +17,14 @@ description: BDD-first implementation skill. Validate behavior over implementati
 
 **MANDATORY** — invoke this skill in these cases:
 
-- Immediately after a PRD is approved, before any implementation begins
-- After `interview` for standard small changes (<1 day) — interview spec is the spec
-- Any feature that changes observable behavior
-- When scoping implementation work into parallel execution waves
+- **After PRD approval** for features — before any implementation begins
+- **After `interview`** for small changes — interview spec is the spec
+- **Any feature that changes observable behavior**
+- **When scoping implementation work into parallel execution waves**
 
 **Do NOT use for:**
 - **Bugs** — use `diagnose` instead. It owns the fix and regression test.
-- **Trivial changes** (<1h, fully specified, ≤2 files) — implement directly, skip to `advisor-gate`.
+- **Trivial changes** (<1h, fully specified, ≤2 files) — implement directly, then `advisor-gate`. Default to direct; load skills only when routing names them.
 
 **You do not have a choice.** If a PRD has been approved and implementation is starting, this skill must be followed.
 

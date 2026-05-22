@@ -1,23 +1,21 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import yaml from 'js-yaml'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const groundworkSkillsDir = path.resolve(__dirname, '../../skills/groundwork')
 
-export function extractAndStripFrontmatter(content: string): { frontmatter: Record<string, string>; content: string } {
+export function extractAndStripFrontmatter(content: string): { frontmatter: Record<string, any>; content: string } {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
   if (!match) return { frontmatter: {}, content }
   const frontmatterStr = match[1]
   const body = match[2]
-  const frontmatter: Record<string, string> = {}
-  for (const line of frontmatterStr.split('\n')) {
-    const colonIdx = line.indexOf(':')
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim()
-      const value = line.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '')
-      frontmatter[key] = value
-    }
+  let frontmatter: Record<string, any> = {}
+  try {
+    frontmatter = yaml.load(frontmatterStr) as Record<string, any> || {}
+  } catch {
+    // Malformed frontmatter: return empty frontmatter but preserve content
   }
   return { frontmatter, content: body }
 }

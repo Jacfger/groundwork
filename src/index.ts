@@ -29,6 +29,21 @@ const AGENT_DEFAULTS: Record<string, { temperature?: number }> = {
   observer: { temperature: 0.1 },
 }
 
+function isPlainObject(value: any): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function deepMergeDefaults(target: Record<string, any>, source: Record<string, any>): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (target[key] === undefined) {
+      target[key] = value
+    } else if (isPlainObject(target[key]) && isPlainObject(value)) {
+      deepMergeDefaults(target[key], value)
+    }
+    // If target already has the key (scalar or array), keep target's value
+  }
+}
+
 const handoffProcessedSessions = new Set<string>()
 
 export const GroundworkPlugin = async (input: PluginInput) => {
@@ -76,6 +91,10 @@ export const GroundworkPlugin = async (input: PluginInput) => {
           }
           if (AGENT_DEFAULTS[name]?.temperature !== undefined && config.agent[name].temperature === undefined) {
             config.agent[name].temperature = AGENT_DEFAULTS[name].temperature
+          }
+          if (frontmatter.permission) {
+            config.agent[name].permission = config.agent[name].permission || {}
+            deepMergeDefaults(config.agent[name].permission, frontmatter.permission)
           }
         }
       }

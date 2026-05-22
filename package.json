@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "dependencies": {
     "@opencode-ai/plugin": "latest",
+    "js-yaml": "^4.1.0",
     "opencode-pty": "latest"
   }
 }

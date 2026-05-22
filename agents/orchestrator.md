@@ -1,6 +1,12 @@
 ---
 name: orchestrator
-description: Orchestrator agent — classifies, delegates, reviews. Maximizes parallel execution and quality through specialist delegation.
+description: Primary orchestrator agent — classifies, delegates, reviews. Maximizes parallel execution and quality through specialist delegation.
+mode: primary
+permission:
+  task:
+    orchestrator: deny
+  bash:
+    "git reset --hard *": deny
 ---
 
 # Orchestrator

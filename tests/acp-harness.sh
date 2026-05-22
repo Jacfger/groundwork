@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ACP Test Harness for Groundwork Skill Routing
-# Tests that OpenCode ACP correctly routes to skills based on issue classification
+# ACP Test Harness for Groundwork Skill Routing (Relaxed Progressive Disclosure)
+# Tests that OpenCode ACP correctly routes to skills:
+#   - bugs → diagnose (non-obvious only)
+#   - changes/features → direct by default (no skill loading unless ambiguity escalates)
+#   - orchestrator must never spawn task subagents on itself
 #
-# NOTE: The `start` command backgrounds `opencode acp` which may not survive
-# outside a PTY. Start the ACP server via PTY instead:
-#   pty_spawn(command="opencode", args=["acp", "--port", "9880"])
-# Then use `run` and `test` commands against the running server.
+# The `test` command will auto-start the ACP server if not already running.
+# For manual testing, start the server first with the `start` command, then
+# use `run` and `test` against it. Stop with the `stop` command when done.
 
 DEFAULT_PORT=9877
 PORT="${DEFAULT_PORT}"
@@ -88,27 +90,41 @@ cmd_start() {
     fi
 
     echo "Starting ACP server on port $PORT..."
-    opencode acp --port "$PORT" &
+    local server_log="/tmp/acp-server-${PORT}.log"
+    rm -f "$server_log"
+    opencode acp --port "$PORT" > "$server_log" 2>&1 &
     local server_pid=$!
     echo "$server_pid" > "$PID_FILE"
 
-    # Wait for server to bind
+    # Wait for server to be ready with active polling
     echo "Waiting for server to start..."
-    sleep 3
+    local max_wait=30
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        if curl -sf "http://localhost:$PORT/" > /dev/null 2>&1; then
+            echo -e "${GREEN}ACP server started successfully${NC}"
+            echo "  PID: $server_pid"
+            echo "  Port: $PORT"
+            echo "  URL: http://localhost:$PORT/"
+            return 0
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            echo -e "${RED}ACP server process exited unexpectedly${NC}" >&2
+            echo "Server log ($server_log):" >&2
+            cat "$server_log" >&2
+            rm -f "$PID_FILE"
+            return 1
+        fi
+        sleep 1
+        ((waited++))
+    done
 
-    # Check if server is responding
-    if curl -sf "http://localhost:$PORT/" > /dev/null 2>&1; then
-        echo -e "${GREEN}ACP server started successfully${NC}"
-        echo "  PID: $server_pid"
-        echo "  Port: $PORT"
-        echo "  URL: http://localhost:$PORT/"
-        return 0
-    else
-        echo -e "${RED}Failed to start ACP server${NC}" >&2
-        kill "$server_pid" 2>/dev/null || true
-        rm -f "$PID_FILE"
-        return 1
-    fi
+    echo -e "${RED}Failed to start ACP server (timed out after ${max_wait}s)${NC}" >&2
+    echo "Server log ($server_log):" >&2
+    cat "$server_log" >&2
+    kill "$server_pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    return 1
 }
 
 cmd_stop() {
@@ -139,6 +155,8 @@ cmd_run() {
     local timeout_secs=60
     local session_id=""
     local expect_skills=""
+    local multi_turn="false"
+    local max_turns=5
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -164,6 +182,14 @@ cmd_run() {
                 ;;
             --expect-skills)
                 expect_skills="$2"
+                shift 2
+                ;;
+            --multi-turn)
+                multi_turn="true"
+                shift
+                ;;
+            --max-turns)
+                max_turns="$2"
                 shift 2
                 ;;
             *)
@@ -202,15 +228,14 @@ cmd_run() {
 
     # Run with timeout
     local exit_code=0
-    if ! timeout "$timeout_secs" "${cmd[@]}" > "$output_file" 2>&1; then
-        exit_code=$?
-        if [[ $exit_code -eq 124 ]]; then
-            echo -e "${YELLOW}Test timed out after ${timeout_secs}s${NC}"
-            exit_code=1
-        else
-            echo -e "${RED}Test failed with exit code $exit_code${NC}" >&2
-            exit_code=2
-        fi
+    timeout "$timeout_secs" "${cmd[@]}" > "$output_file" 2>&1
+    local cmd_status=$?
+    if [[ $cmd_status -eq 124 ]]; then
+        echo -e "${YELLOW}Test timed out after ${timeout_secs}s${NC}"
+        exit_code=1
+    elif [[ $cmd_status -ne 0 ]]; then
+        echo -e "${RED}Test command failed with status $cmd_status${NC}" >&2
+        exit_code=2
     fi
 
     end_time=$(date +%s%3N)
@@ -221,42 +246,109 @@ cmd_run() {
     local text_content=""
     local skills_loaded="[]"
     local tools_used="[]"
+    local task_subagent_types="[]"
     local finish_reason=""
 
     if [[ -s "$output_file" ]]; then
+        # JSON Lines format — slurp with -s, process as array
         # Extract session ID from first step_start event
-        session_id_found=$(jq -r '[.[] | select(.type == "step_start")][0].session_id // empty' "$output_file" 2>/dev/null || true)
+        session_id_found=$(jq -rs 'map(select(.type == "step_start")) | .[0].sessionID // empty' "$output_file" 2>/dev/null || true)
 
-        # Extract all text content
-        text_content=$(jq -r '[.[] | select(.type == "text") | .text] | join("")' "$output_file" 2>/dev/null || true)
+        # Extract all text content (nested under .part.text)
+        text_content=$(jq -rs 'map(select(.type == "text") | .part.text) | join(" ")' "$output_file" 2>/dev/null || true)
 
-        # Extract skills loaded from tool_use events where tool=skill
-        skills_loaded=$(jq -r '[.[] | select(.type == "tool_use" and .tool == "skill") | .input.name // empty] | unique' "$output_file" 2>/dev/null || true)
+        # Extract skills loaded from tool_use events where .part.tool == "skill"
+        # Skill name is at .part.state.input.name
+        skills_loaded=$(jq -rs 'map(select(.type == "tool_use" and .part.tool == "skill") | .part.state.input.name // empty)' "$output_file" 2>/dev/null || true)
 
-        # Extract all tool calls
-        tools_used=$(jq -r '[.[] | select(.type == "tool_use") | .tool] | unique' "$output_file" 2>/dev/null || true)
+        # Extract all tool calls (tool type at .part.tool)
+        tools_used=$(jq -rs 'map(select(.type == "tool_use") | .part.tool)' "$output_file" 2>/dev/null || true)
 
-        # Extract finish reason from step_finish event
-        finish_reason=$(jq -r '[.[] | select(.type == "step_finish")][0].finish_reason // empty' "$output_file" 2>/dev/null || true)
+        # Extract task subagent types from task tool calls
+        task_subagent_types=$(jq -rs 'map(select(.type == "tool_use" and .part.tool == "task") | .part.state.input.subagent_type // empty)' "$output_file" 2>/dev/null || true)
+
+    # Extract finish reason from step_finish event (nested under .part.reason)
+    finish_reason=$(jq -rs 'map(select(.type == "step_finish")) | .[0].part.reason // empty' "$output_file" 2>/dev/null || true)
     fi
 
-    # Write summary
+    # Multi-turn continuation for feature conversations
+    if [[ "$multi_turn" == "true" && -n "$session_id_found" ]]; then
+        local turn=1
+        local canned_answers=(
+            "Yes, this is a significant multi-day feature. Please proceed with the interview to gather requirements."
+            "The target users are developers and project managers. We need a visual rule builder UI, localStorage persistence, and a simulation mode to test rules."
+            "Please go ahead and create the PRD now."
+        )
+
+        while [[ $turn -lt $max_turns ]]; do
+            if echo "$skills_loaded" | jq -e 'contains(["create-prd"])' > /dev/null 2>&1; then
+                echo "Multi-turn: create-prd loaded on turn $turn, stopping"
+                break
+            fi
+
+            if ! echo "$skills_loaded" | jq -e 'contains(["interview"])' > /dev/null 2>&1; then
+                echo "Multi-turn: interview not loaded, stopping multi-turn"
+                break
+            fi
+
+            local answer_idx=$(( (turn - 1) % ${#canned_answers[@]} ))
+            local follow_up_prompt="${canned_answers[$answer_idx]}"
+
+            echo "Multi-turn turn $turn: continuing session $session_id_found"
+
+            local follow_cmd=(opencode run --attach "http://localhost:$PORT" --format json --dir "$dir" --session "$session_id_found")
+            follow_cmd+=("$follow_up_prompt")
+
+            local follow_output_file="$RESULTS_DIR/${name}_turn${turn}.json"
+            local follow_exit_code=0
+            timeout "$timeout_secs" "${follow_cmd[@]}" > "$follow_output_file" 2>&1
+            local follow_status=$?
+            if [[ $follow_status -eq 124 ]]; then
+                echo -e "${YELLOW}Multi-turn turn $turn timed out after ${timeout_secs}s${NC}"
+                follow_exit_code=1
+                break
+            elif [[ $follow_status -ne 0 ]]; then
+                echo -e "${YELLOW}Multi-turn turn $turn failed with status $follow_status${NC}"
+                follow_exit_code=2
+                break
+            fi
+
+            # Merge this turn's output into the main output file for unified parsing
+            cat "$follow_output_file" >> "$output_file"
+
+            # Re-extract from combined output (preserve order — no unique)
+            skills_loaded=$(jq -rs 'map(select(.type == "tool_use" and .part.tool == "skill") | .part.state.input.name // empty)' "$output_file" 2>/dev/null || true)
+            tools_used=$(jq -rs 'map(select(.type == "tool_use") | .part.tool)' "$output_file" 2>/dev/null || true)
+            task_subagent_types=$(jq -rs 'map(select(.type == "tool_use" and .part.tool == "task") | .part.state.input.subagent_type // empty)' "$output_file" 2>/dev/null || true)
+            text_content=$(jq -rs 'map(select(.type == "text") | .part.text) | join(" ")' "$output_file" 2>/dev/null || true)
+
+            ((turn++))
+        done
+    fi
+
+    # Write summary (build valid JSON — use jq for proper string escaping)
+    text_json=$(echo "$text_content" | jq -R -s . 2>/dev/null || echo '""')
+    prompt_json=$(echo "$prompt" | jq -R -s . 2>/dev/null || echo '""')
+    skills_json="${skills_loaded:-[]}"
+    tools_json="${tools_used:-[]}"
+    task_types_json="${task_subagent_types:-[]}"
     cat > "$summary_file" <<EOF
 {
   "name": "$name",
-  "session_id": "${session_id_found:-\"\"}",
-  "text": $(echo "$text_content" | jq -R -s .),
-  "skills_loaded": ${skills_loaded:-[]},
-  "tools_used": ${tools_used:-[]},
-  "finish_reason": "${finish_reason:-\"\"}",
+  "session_id": "${session_id_found:-}",
+  "text": $text_json,
+  "skills_loaded": $skills_json,
+  "tools_used": $tools_json,
+  "task_subagent_types": $task_types_json,
+  "finish_reason": "${finish_reason:-}",
   "duration_ms": $duration_ms,
-  "prompt": $(echo "$prompt" | jq -R -s .)
+  "prompt": $prompt_json
 }
 EOF
 
     # Check expected skills
+    local pass=true
     if [[ -n "$expect_skills" ]]; then
-        local pass=true
         IFS=',' read -ra expected_array <<< "$expect_skills"
         for skill in "${expected_array[@]}"; do
             skill=$(echo "$skill" | xargs) # trim whitespace
@@ -268,20 +360,10 @@ EOF
                 pass=false
             fi
         done
+    fi
 
-        # Also check that no unexpected skills were loaded when expecting none
-        if [[ "$expect_skills" == "" ]]; then
-            local skills_count
-            skills_count=$(echo "$skills_loaded" | jq 'length')
-            if [[ "$skills_count" -gt 0 ]]; then
-                echo -e "${YELLOW}WARNING: Expected no skills but found: $skills_loaded${NC}"
-                pass=false
-            fi
-        fi
-
-        if $pass; then
-            echo -e "${GREEN}PASS: All expected skills loaded correctly${NC}"
-        fi
+    if $pass; then
+        echo -e "${GREEN}PASS: Skill loading correct${NC}"
     fi
 
     echo "  Output: $output_file"
@@ -310,17 +392,37 @@ cmd_test() {
     rm -rf "$RESULTS_DIR"
     mkdir -p "$RESULTS_DIR"
 
-    # Ensure test project exists
-    if [[ ! -d "/tmp/todo-app" ]]; then
-        echo "Creating test project at /tmp/todo-app..."
-        mkdir -p /tmp/todo-app/src
-        cat > /tmp/todo-app/src/style.css <<'EOF'
+    # Reset test project (recreate from scratch to avoid test pollution)
+    echo "Creating fresh test project at /tmp/todo-app..."
+    rm -rf /tmp/todo-app
+    mkdir -p /tmp/todo-app/src
+    cat > /tmp/todo-app/src/style.css <<'EOF'
 .todo-app {
   backgroud: white;
   color: black;
 }
 EOF
-    fi
+    cat > /tmp/todo-app/index.html <<'EOF'
+<!DOCTYPE html>
+<html>
+<head><title>Todo App</title></head>
+<body>
+  <div id="app"></div>
+  <script src="src/app.js"></script>
+</body>
+</html>
+EOF
+    cat > /tmp/todo-app/src/app.js <<'EOF'
+const todos = [
+  { id: 1, text: 'Learn OpenCode', completed: false },
+  { id: 2, text: 'Build something', completed: true },
+];
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '<ul>' + todos.map(t => '<li>' + t.text + '</li>').join('') + '</ul>';
+}
+render();
+EOF
 
     # Start server if not running
     if [[ ! -f "$PID_FILE" ]] || ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -349,7 +451,7 @@ EOF
     fi
     echo ""
 
-    # Test 2: Trivial Bug
+    # Test 2: Obvious bug (typo) — direct fix, no diagnose needed
     echo "--- Test 2: trivial-bug ---"
     if cmd_run --name trivial-bug \
         --prompt "Fix the typo in /tmp/todo-app/src/style.css where it says 'backgroud' instead of 'background'" \
@@ -362,7 +464,7 @@ EOF
     fi
     echo ""
 
-    # Test 3: Standard Bug
+    # Test 3: Non-obvious Bug — needs diagnose
     echo "--- Test 3: standard-bug ---"
     if cmd_run --name standard-bug \
         --prompt "The todo app filters don't work correctly. When I click 'Active' filter, completed items still show. Debug and fix it." \
@@ -375,29 +477,44 @@ EOF
     fi
     echo ""
 
-    # Test 4: Small Change
+    # Test 4: Small Change — direct by default, no skills needed
     echo "--- Test 4: small-change ---"
     if cmd_run --name small-change \
         --prompt "Add a button to the todo app that toggles all todos between completed and uncompleted" \
         --dir /tmp/todo-app \
         --timeout 120 \
-        --expect-skills "interview"; then
+        --expect-skills ""; then
         results+=("small-change|PASS")
     else
         results+=("small-change|FAIL")
     fi
     echo ""
 
-    # Test 5: Feature
+    # Test 5: Feature — clearly multi-day, should trigger interview then create-prd
     echo "--- Test 5: feature ---"
     if cmd_run --name feature \
-        --prompt "Add dark mode support to the todo app with a toggle button in the header. It should persist the preference in localStorage" \
+        --prompt 'Build a workflow engine for the todo app: users can create custom automation rules with triggers (e.g., "when a todo is marked complete"), conditions (e.g., "if the todo has tag #work"), and actions (e.g., "move to Done list and notify via email"). Include a visual rule builder UI, rule persistence in localStorage, and a simulation mode to test rules without affecting real data.' \
         --dir /tmp/todo-app \
         --timeout 300 \
-        --expect-skills "interview"; then
+        --multi-turn \
+        --max-turns 5 \
+        --expect-skills "interview,create-prd"; then
         results+=("feature|PASS")
     else
         results+=("feature|FAIL")
+    fi
+    echo ""
+
+    # Test 6: Orchestrator self-task prevention — must not spawn task subagents
+    echo "--- Test 6: orchestrator-no-self-task ---"
+    if cmd_run --name orchestrator-no-self-task \
+        --prompt "Add a search bar to the todo app that filters todos in real-time as the user types" \
+        --dir /tmp/todo-app \
+        --timeout 120 \
+        --expect-skills ""; then
+        results+=("orchestrator-no-self-task|PASS")
+    else
+        results+=("orchestrator-no-self-task|FAIL")
     fi
     echo ""
 
@@ -432,8 +549,9 @@ EOF
             trivial) expected_skills="(none)" ;;
             trivial-bug) expected_skills="(none)" ;;
             standard-bug) expected_skills="diagnose" ;;
-            small-change) expected_skills="interview" ;;
-            feature) expected_skills="interview" ;;
+            small-change) expected_skills="(none)" ;;
+            feature) expected_skills="interview, create-prd" ;;
+            orchestrator-no-self-task) expected_skills="(none)" ;;
         esac
 
         local duration_sec

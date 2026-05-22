@@ -201,107 +201,89 @@ When a task fails:
 
 ---
 
-## Issue-Type Routing
+## Issue-Type Routing (Progressive Disclosure)
 
-**Before starting any task, classify the issue type and scope, then follow the corresponding path.** Classification is based on three dimensions: **type** (what), **scope** (how much), and **specificity** (how clear the requirements are).
+**Before implementing, classify the issue along two axes: type and scope.** Single-line, zero-ambiguity fixes go direct. Small changes that are clear and low-risk also go direct — only route small changes into `interview` when they are ambiguous, cross system boundaries, or carry non-trivial risk. Features always follow the structured path: `interview` → `create-prd` → `bdd-implement`. Don't pre-optimize — but don't skip required steps either.
 
-### MANDATORY SKILL INVOCATION
+### Skill Invocation
 
-When a routing path names a skill (e.g., `interview`, `diagnose`, `create-prd`, `bdd-implement`, `advisor-gate`, `prototype`), you **MUST invoke the `skill` tool** to load it. These are NOT optional suggestions — they are mandatory workflow steps.
+When a routing path names a skill (e.g., `diagnose`, `interview`, `create-prd`, `bdd-implement`, `advisor-gate`, `prototype`), load it with the `skill` tool. Skills contain domain-specific instructions (debugging loops, question strategies, decomposition patterns) not present in this bootstrap.
 
-```
-WRONG:  Read routing path → classify → skip skill → implement directly
-RIGHT:  Read routing path → classify → invoke skill tool → follow skill's instructions
-```
+**Skills are loaded on-demand via progressive disclosure, not upfront classification.** If you load a skill and it turns out you didn't need it — that's fine. If you skip a skill and later realize you needed it — reload and restart that phase.
 
-**Why this is mandatory:** Each skill contains domain-specific instructions (question strategies, debugging loops, decomposition patterns) that are NOT included in this bootstrap. Without loading the skill, you lose critical workflow discipline.
-
-**Exception:** Only the `Trivial` and `Docs-Only` paths skip skill invocation entirely. Every other path requires at least one skill load.
-
-**Anti-pattern — the trivial escape hatch:** Do NOT re-classify a feature or small change as "trivial" just because the user described it clearly. A clearly described feature is still a feature. A clearly described small change is still a small change. The trivial path is only for changes that modify ≤1 file, ≤10 lines, and add no new behavior.
-
-### Trivial (fully specified, <1h, ≤1 file, ≤10 lines)
-```
-implement directly → invoke skill "advisor-gate"
-```
-- The user's message contains everything needed — no ambiguity, no exploration required
-- **Strict criteria — ALL must be true**: ≤1 file changed, ≤10 lines, no new behavior, no new dependencies
-- Examples: fix a typo, rename a variable, update a dependency version, change a color value
-- **Skip**: interview, bdd-implement, PRD — all overhead here
-- **NOT trivial**: adding features, creating components, changing user-facing behavior — even if well-described
+**Always end with `advisor-gate`.** Every path converges here. Never declare done without it.
 
 ### Bug (something is broken)
 
-**Trivial bug** (obvious cause, ≤1 file fix):
-```
-invoke skill "diagnose" → abbreviated mode (Phase 1+2+5+6) → invoke skill "advisor-gate"
-```
-- Skip Phase 3 (hypothesise) and Phase 4 (instrument) — cause is already known
-- Write regression test, apply fix, verify
+**Load `diagnose` for any bug that needs investigation.** The only exception is a truly obvious fix (typo in a known file, known config value, clear localized regression you can spot without exploration). If you have to explore the codebase to understand it → load `diagnose` first.
 
-**Standard bug** (cause unclear, needs investigation):
 ```
-invoke skill "diagnose" → full 6-phase loop → invoke skill "advisor-gate"
+[obvious typo/config]  fix directly → invoke skill "advisor-gate"
+[anything else]        invoke skill "diagnose" FIRST → (skill runs 6-phase loop) → invoke skill "advisor-gate"
 ```
-- NO PRD needed — `diagnose` owns the fix AND the regression test
-- Do NOT invoke `bdd-implement` for bugs — `diagnose` is the complete bug path
 
-**Complex bug** (multi-system, unclear boundaries, might be a design issue):
-```
-invoke skill "interview" (scoping) → invoke skill "diagnose" → invoke skill "advisor-gate"
-```
-- Interview resolves scope before debugging begins
-- If the bug reveals an architectural issue, note it in the post-mortem
+**Rule of thumb:** If you're about to explore the codebase with `task` to understand a bug → stop. Load `diagnose` instead. It has the exploration built in.
 
-### Small Change (<1 day, non-architectural)
+**Examples:**
+- ❌ `"The filter is broken"` → don't explore; load `diagnose`
+- ❌ `"Submit button doesn't work"` → don't explore; load `diagnose`
+- ❌ `"Error on line 42"` without obvious fix → don't explore; load `diagnose`
+- ✅ `"Fix typo 'backgroud' → 'background'"` → obvious, fix directly
+- ✅ `"Port 8080 is already in use"` → known config, fix directly
 
-**Trivial small change** (strict criteria — ALL must be true):
-```
-implement directly → invoke skill "advisor-gate"
-```
-- **≤1 file changed**, **≤10 lines added/modified**, **no new behavior** (only adjusts existing behavior)
-- Examples: change a color, adjust padding, rename a prop, update a config value, fix a CSS rule
-- **NOT trivial** (even if well-described): adding a new feature, creating a new component, adding new user-facing behavior, touching >1 file, adding >10 lines
-- If it adds or changes user-facing behavior → it is a **standard small change**, use the path below
+- Do NOT invoke `bdd-implement` or `create-prd` for bugs — `diagnose` is the full debug path
+- If the bug is multi-system or boundaries are unclear → `diagnose` will call for `interview` itself
 
-**Standard small change** (any small change that doesn't meet ALL trivial criteria):
-```
-invoke skill "interview" (quick: 3-4 questions) → invoke skill "bdd-implement" (decompose into max parallel tasks) → invoke skill "advisor-gate"
-```
-- This is the DEFAULT small-change path. Use it unless the change is truly single-file, ≤10 lines, no new behavior.
-- Interview output IS the spec — no file artifact needed
-- Quick interview: cover only the unclear aspects, skip what's obvious
-- If during implementation estimated work exceeds 1 day → stop, escalate to `create-prd`
+### Change
 
-### Feature (≥1 day, or architectural)
-```
-invoke skill "interview" (full: 8-10 questions) → invoke skill "create-prd" → invoke skill "bdd-implement" (vertical-slice decomposition) → invoke skill "advisor-gate"
-```
-- Interviewing is mandatory before PRD creation
+Classify by scope.
+
+**Trivial** (direct):
+- Single-file, single-line changes with zero ambiguity
+- Examples: typo fix, rename variable, update hex color, change constant value, add a missing import
+- Path: implement directly → invoke skill "advisor-gate"
+
+**Small change** — classify by clarity and risk:
+
+*Clear & low-risk* — implement directly:
+- Well-understood, localized changes where the approach and impact are obvious
+- Examples: add a simple validation rule, update a default config value, extract a helper function, add a missing null check, wire up a new field to an existing form
+- Path: implement directly → invoke skill "advisor-gate"
+
+*Ambiguous or risky* — interview quick → implement:
+- Changes where requirements, scope, or side-effects are unclear; changes that touch shared code, public APIs, auth, or multiple modules
+- Examples: modify a shared data model, change an API response shape, alter permission checks, refactor a core utility used across the codebase
+- Path: Use the `skill` tool to load `interview` (quick: 2-4 questions) → implement → use the `skill` tool to load `advisor-gate`
+
+**Escalation from small-change to feature:** If during implementation the work grows beyond 1 day or feels uncertain → stop, use the `skill` tool to load `interview` (then optionally use the `skill` tool to load `create-prd`).
+
+### Feature (clearly ≥1 day, or architectural)
+
+**Path: Use the `skill` tool to load `interview` (full: 8-10 questions) → then use the `skill` tool to load `create-prd` → then use the `skill` tool to load `bdd-implement` → then use the `skill` tool to load `advisor-gate`**
+
+- Only use this path when the work is **clearly** multi-day or architectural from the start
+- **Mandatory skill-tool invocations:** `interview` → `create-prd` → `bdd-implement` → `advisor-gate`. Never skip to implementation before loading each skill.
 - PRD is created from interview spec, not from a blank slate
-- bdd-implement decomposes into vertical tracer-bullet slices (not horizontal layers)
-- PRD uses modular template — only sections the feature needs
+- bdd-implement decomposes into vertical tracer-bullet slices
+- If unsure whether it's ≥1 day → use the **Change** path and escalate if needed
 
 ### Spike / Design Exploration
 ```
 invoke skill "prototype" → feed findings into next skill
 ```
 - When the approach is uncertain and needs validation before committing
-- Prototype findings inform interview or PRD
 
 ### Refactor
 ```
-If <1d: invoke skill "interview" → invoke skill "bdd-implement" → invoke skill "advisor-gate"
-If ≥1d: invoke skill "interview" → invoke skill "create-prd" → invoke skill "bdd-implement" → invoke skill "advisor-gate"
+[safe / small scope]  implement directly → invoke skill "advisor-gate"
+[risky / unclear]     invoke skill "interview" → implement → invoke skill "advisor-gate"
+[clearly ≥1d]         invoke skill "interview" → invoke skill "create-prd" → invoke skill "bdd-implement" → invoke skill "advisor-gate"
 ```
-- Refactoring follows the same paths — scope determines the branch
 
 ### Docs-Only Change
 ```
 implement directly → invoke skill "advisor-gate"
 ```
-- README updates, comment fixes, documentation changes
-- No testing needed beyond visual review
 
 ---
 
@@ -342,7 +324,7 @@ Every subagent task automatically gets a preamble prepended: `[SUBAGENT TASK RUL
 - Make decisions autonomously
 - Return final result in last message
 
-This is the **soft prevention** layer. The **hard deny** layer in `opencode.json` (`"question": "deny"` for all specialist agents) catches any agent that ignores the preamble.
+This is the **soft prevention** layer. The **hard deny** layer in each specialist agent's frontmatter (`permission.question: deny`) catches any agent that ignores the preamble.
 
 ---
 
@@ -350,40 +332,44 @@ This is the **soft prevention** layer. The **hard deny** layer in `opencode.json
 
 ```
 digraph flow {
-  "User message" -> "Classify: type + scope + specificity";
-  "Classify: type + scope + specificity" -> "Trivial" [label="fully specified, <1h"];
-  "Classify: type + scope + specificity" -> "Bug path" [label="something broken"];
-  "Classify: type + scope + specificity" -> "Small change path" [label="<1 day"];
-  "Classify: type + scope + specificity" -> "Feature path" [label="≥1 day"];
-  "Classify: type + scope + specificity" -> "Spike" [label="uncertain approach"];
+  "User message" -> "Classify: Bug or not?";
+
+  "Classify: Bug or not?" -> "Bug path" [label="something broken"];
+  "Classify: Bug or not?" -> "Change path" [label="change, refactor"];
+  "Classify: Bug or not?" -> "Feature path" [label="feature"];
+  "Classify: Bug or not?" -> "Spike" [label="uncertain approach"];
+  "Classify: Bug or not?" -> "Docs-Only" [label="documentation"];
+
+  "Bug path" -> "Assess: obvious?" [label="typo, known config"];
+  "Bug path" -> "invoke skill diagnose" [label="root cause unclear"];
+  "Assess: obvious?" -> "implement directly (fix)";
+  "implement directly (fix)" -> "invoke skill advisor-gate";
+  "invoke skill diagnose" -> "invoke skill advisor-gate";
+
+  "Change path" -> "Assess scope";
+  "Assess scope" -> "Trivial" [label="single-line, zero ambiguity"];
+  "Assess scope" -> "SmallClear" [label="clear & low-risk, <1 day"];
+  "Assess scope" -> "SmallRisky" [label="ambiguous or risky, <1 day"];
 
   "Trivial" -> "implement directly";
   "implement directly" -> "invoke skill advisor-gate";
 
-  "Bug path" -> "Trivial bug" [label="obvious cause"];
-  "Bug path" -> "Standard bug" [label="needs investigation"];
-  "Bug path" -> "Complex bug" [label="multi-system"];
-  "Trivial bug" -> "invoke skill diagnose (abbreviated)";
-  "Standard bug" -> "invoke skill diagnose (full)";
-  "Complex bug" -> "invoke skill interview (scoping)";
-  "invoke skill interview (scoping)" -> "invoke skill diagnose (full)";
-  "invoke skill diagnose (abbreviated)" -> "invoke skill advisor-gate";
-  "invoke skill diagnose (full)" -> "invoke skill advisor-gate";
+  "SmallClear" -> "implement directly";
 
-  "Small change path" -> "Trivial SC" [label="fully specified"];
-  "Small change path" -> "Standard SC" [label="needs design"];
-  "Trivial SC" -> "implement directly";
-  "Standard SC" -> "invoke skill interview (quick: 3-4 Q)";
-  "invoke skill interview (quick: 3-4 Q)" -> "invoke skill bdd-implement (max parallel tasks)";
-  "invoke skill bdd-implement (2-3 parallel tasks)" -> "invoke skill advisor-gate";
+  "SmallRisky" -> "invoke skill interview (quick)";
+  "invoke skill interview (quick)" -> "implement";
+  "implement" -> "invoke skill advisor-gate";
 
-  "Feature path" -> "invoke skill interview (full: 8-10 Q)";
-  "invoke skill interview (full: 8-10 Q)" -> "invoke skill create-prd";
-  "invoke skill create-prd" -> "invoke skill bdd-implement (vertical slices)";
-  "invoke skill bdd-implement (vertical slices)" -> "invoke skill advisor-gate";
+  "Feature path" -> "invoke skill interview (full)";
+  "invoke skill interview (full)" -> "invoke skill create-prd";
+  "invoke skill create-prd" -> "invoke skill bdd-implement";
+  "invoke skill bdd-implement" -> "invoke skill advisor-gate";
 
   "Spike" -> "invoke skill prototype";
-  "invoke skill prototype" -> "invoke skill interview | create-prd | bdd-implement" [label="findings feed next"];
+  "invoke skill prototype" -> "Check escalation signals" [label="findings inform next step"];
+
+  "Docs-Only" -> "implement directly";
+  "implement directly" -> "invoke skill advisor-gate";
 
   "invoke skill advisor-gate" -> "Get APPROVE";
   "Get APPROVE" -> "Use question tool to present result";

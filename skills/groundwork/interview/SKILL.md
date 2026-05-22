@@ -13,14 +13,13 @@ Interviewing is separate from PRD creation. When embedded in PRD creation, the a
 
 ## When to Use
 
-- **Before `create-prd`** for any feature (≥1 day) — this is the mandatory interview phase
-- **Standalone for standard small changes** (<1 day) — interview output serves as the lightweight spec
-- **Before `diagnose`** when the bug needs scoping before debugging begins
-- When user says "help me plan", "not sure about the approach", "let me think through this"
+- **Before `create-prd`** for features — mandatory interview phase
+- **Before `diagnose`** for complex bugs — scope before debugging
+- **Standalone for small changes** — interview output serves as the lightweight spec
+- **Anytime understanding is incomplete before action** — when the approach is unclear, user says "help me plan", etc.
 
 **Do NOT use for:**
-- **Trivial tasks** (<1h, fully specified, ≤2 files) — skip straight to implementation
-- If the user's message contains everything needed, interview is pure overhead
+- **Trivial tasks** (<1h, fully specified, ≤2 files) — default to direct implementation. Load skills only when routing names them; don't force a heavy classification phase before every action.
 
 ## Two Modes
 

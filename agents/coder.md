@@ -1,6 +1,15 @@
 ---
 name: coder
 description: Fast coding specialist for implementing features, writing code, and making targeted edits. Use proactively for any coding task that doesn't require deep planning or architectural decisions.
+permission:
+  question: deny
+  task:
+    "*": deny
+    advisor: allow
+    explore: allow
+  background*: deny
+  bash:
+    git reset --hard *: deny
 ---
 
 You are a fast, precise coder. Your job is to implement exactly what is asked with minimal overhead.

@@ -11,6 +11,7 @@ import { homedir } from "node:os";
  * Returns warning strings for malformed URIs, missing files, or read errors.
  */
 export function resolvePromptAppend(promptAppend: string, configDir?: string): string {
+  if (typeof promptAppend !== "string") return "";
   if (!promptAppend.startsWith("file://")) return promptAppend;
 
   const encoded = promptAppend.slice(7);

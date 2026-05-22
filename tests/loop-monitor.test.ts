@@ -193,7 +193,7 @@ describe("LoopMonitor", () => {
             messageID,
             type: "tool",
             tool,
-            state: { input },
+            state: { type: "completed", input },
           },
         },
       }
@@ -240,7 +240,7 @@ describe("LoopMonitor", () => {
             messageID,
             type: "tool",
             tool,
-            state: { input },
+            state: { type: "completed", input },
           },
         },
       }
@@ -297,7 +297,7 @@ describe("LoopMonitor", () => {
             messageID,
             type: "tool",
             tool,
-            state: { input },
+            state: { type: "completed", input },
           },
         },
       }
