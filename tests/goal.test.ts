@@ -4,7 +4,143 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { readGoal, writeGoal, clearGoal, goalReminder, type Goal } from '../src/lib/goal.js'
+import { readGoal, writeGoal, clearGoal, goalReminder, injectGoalAndBootstrap, type Goal, type InjectionParams } from '../src/lib/goal.js'
+
+// ─── Regression: Goal & Bootstrap Injection via injectGoalAndBootstrap ──────
+// Tests the shared pure function used by the actual transform hook. This
+// eliminates mirror-testing and catches real regressions in the injection logic.
+
+function makeMessage(role: string, text: string, info?: Record<string, any>) {
+  return { info: { role, ...info }, parts: text ? [{ type: 'text', text }] : [] }
+}
+
+describe('injectGoalAndBootstrap', () => {
+  const bootstrapText = 'EXTREMELY_IMPORTANT\nBootstrap content here'
+  const goalReminderText = '<ACTIVE_GOAL>\nGoal: Fix the bug\n</ACTIVE_GOAL>'
+
+  test('injects bootstrap into first user message with synthetic: true', () => {
+    const messages = [makeMessage('user', 'Hello world')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: null })
+    const firstPart = messages[0].parts[0]
+    expect(firstPart).toEqual({ type: 'text', text: bootstrapText, synthetic: true })
+  })
+
+  test('injects goal reminder into last user message with synthetic: true', () => {
+    const messages = [
+      makeMessage('user', 'First message'),
+      makeMessage('assistant', 'Response'),
+      makeMessage('user', 'Last message'),
+    ]
+    injectGoalAndBootstrap(messages, { bootstrap: null, goalReminder: goalReminderText })
+    const lastUser = messages.filter((m: any) => m.info.role === 'user').pop()!
+    const lastPart = lastUser.parts[lastUser.parts.length - 1]
+    expect(lastPart).toEqual({ type: 'text', text: goalReminderText, synthetic: true })
+  })
+
+  test('both bootstrap and goal are injected in the same call', () => {
+    const messages = [
+      makeMessage('user', 'First message'),
+      makeMessage('assistant', 'Response'),
+      makeMessage('user', 'Last message'),
+    ]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    // Bootstrap in first user
+    const firstPart = messages[0].parts[0]
+    expect(firstPart).toEqual({ type: 'text', text: bootstrapText, synthetic: true })
+    // Goal in last user
+    const lastUser = messages[2]
+    const lastPart = lastUser.parts[lastUser.parts.length - 1]
+    expect(lastPart).toEqual({ type: 'text', text: goalReminderText, synthetic: true })
+  })
+
+  test('injected parts have exactly 3 keys: type, text, synthetic', () => {
+    const messages = [makeMessage('user', 'Hi')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    const injectedPart = messages[0].parts[0]
+    expect(Object.keys(injectedPart).sort()).toEqual(['synthetic', 'text', 'type'])
+  })
+
+  test('does not double-inject bootstrap (idempotent)', () => {
+    const messages = [makeMessage('user', 'EXTREMELY_IMPORTANT\nAlready injected')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: null })
+    // The "EXTREMELY_IMPORTANT" guard should prevent re-injection
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].text).toBe('EXTREMELY_IMPORTANT\nAlready injected')
+  })
+
+  test('does not double-inject goal reminder (idempotent)', () => {
+    const messages = [
+      makeMessage('user', 'Already has ACTIVE_GOAL'),
+    ]
+    injectGoalAndBootstrap(messages, { bootstrap: null, goalReminder: goalReminderText })
+    // The "ACTIVE_GOAL" guard should prevent re-injection
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].text).toBe('Already has ACTIVE_GOAL')
+  })
+
+  test('no-op on empty messages', () => {
+    const messages: any[] = []
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    expect(messages).toHaveLength(0)
+  })
+
+  test('no-op when no user messages exist', () => {
+    const messages = [makeMessage('assistant', 'System response')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].synthetic).toBeUndefined()
+  })
+
+  test('no-op when bootstrap is null and goalReminder is null', () => {
+    const messages = [makeMessage('user', 'Hello')]
+    injectGoalAndBootstrap(messages, { bootstrap: null, goalReminder: null })
+    expect(messages[0].parts).toHaveLength(1)
+    expect(messages[0].parts[0].text).toBe('Hello')
+  })
+
+  test('only goal is injected when bootstrap is null', () => {
+    const messages = [
+      makeMessage('user', 'First message'),
+      makeMessage('user', 'Last message'),
+    ]
+    injectGoalAndBootstrap(messages, { bootstrap: null, goalReminder: goalReminderText })
+    // First user should not have bootstrap
+    expect(messages[0].parts[0].text).toBe('First message')
+    // Last user should have goal
+    const lastUser = messages[1]
+    expect(lastUser.parts[1]).toEqual({ type: 'text', text: goalReminderText, synthetic: true })
+  })
+
+  test('only bootstrap is injected when goalReminder is null', () => {
+    const messages = [
+      makeMessage('user', 'First message'),
+      makeMessage('user', 'Last message'),
+    ]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: null })
+    // First user gets bootstrap
+    expect(messages[0].parts[0]).toEqual({ type: 'text', text: bootstrapText, synthetic: true })
+    // Last user gets no goal
+    expect(messages[1].parts).toHaveLength(1)
+    expect(messages[1].parts[0].text).toBe('Last message')
+  })
+
+  test('goal injected on last user if same message is first and last', () => {
+    const messages = [makeMessage('user', 'Only message')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    // Both bootstrap (unshifted to front) and goal (pushed to back)
+    expect(messages[0].parts).toHaveLength(3)
+    expect(messages[0].parts[0]).toEqual({ type: 'text', text: bootstrapText, synthetic: true })
+    expect(messages[0].parts[1].text).toBe('Only message')
+    expect(messages[0].parts[2]).toEqual({ type: 'text', text: goalReminderText, synthetic: true })
+  })
+
+  test('no-op when first user has empty parts array', () => {
+    const messages = [makeMessage('user', '')]
+    injectGoalAndBootstrap(messages, { bootstrap: bootstrapText, goalReminder: goalReminderText })
+    // parts is empty, so injection is skipped
+    expect(messages[0].parts).toHaveLength(0)
+  })
+})
 
 const tmpDir = path.join(os.tmpdir(), 'groundwork-goal-test')
 const sessionID = 'sess_test_123'

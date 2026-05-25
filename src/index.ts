@@ -15,10 +15,13 @@ import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from '.
 import { createHandoffSessionTool } from './tools/handoff-session.js'
 import { createSetGoalTool } from './tools/set-goal.js'
 import type { ToolDeps } from './tools/deps.js'
-import { readGoal, goalReminder } from './lib/goal.js'
+import { readGoal, goalReminder, injectGoalAndBootstrap } from './lib/goal.js'
+import fastEditTool from './tools/fast-edit-edit.js'
+import fastWriteTool from './tools/fast-edit-write.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const groundworkSkillsDir = path.resolve(__dirname, '..', 'skills', 'groundwork')
+const fastEditSkillsDir = path.resolve(process.env.HOME || '~', '.config/opencode/fast-edit-rs')
 const groundworkAgentsDir = path.resolve(__dirname, '..', 'agents')
 
 const AGENT_DEFAULTS: Record<string, { temperature?: number }> = {
@@ -52,7 +55,7 @@ export const GroundworkPlugin = async (input: PluginInput) => {
   manager.client = client
   manager.directory = directory
 
-  const loopMonitor = new LoopMonitor(client, { enabled: true })
+  const loopMonitor = new LoopMonitor(client, { enabled: false })
   const deps: ToolDeps = { client, directory }
 
   return {
@@ -63,6 +66,9 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       config.skills.paths = config.skills.paths || []
       if (!config.skills.paths.includes(groundworkSkillsDir)) {
         config.skills.paths.push(groundworkSkillsDir)
+      }
+      if (!config.skills.paths.includes(fastEditSkillsDir)) {
+        config.skills.paths.push(fastEditSkillsDir)
       }
       config.command = config.command || {}
       config.command['handoff'] = {
@@ -118,44 +124,29 @@ export const GroundworkPlugin = async (input: PluginInput) => {
     },
 
     'experimental.chat.messages.transform': async (_input: any, output: any) => {
-      if (!output.messages.length) return
       const firstUser = output.messages.find((m: any) => m.info.role === 'user')
-      if (!firstUser || !firstUser.parts.length) return
-
-      // Extract sessionID from message metadata (transform hook input is empty)
-      const sessionID = firstUser.info?.sessionID
-
-      // Select bootstrap based on agent type
-      const agent = firstUser.info?.agent
+      const sessionID = firstUser?.info?.sessionID
+      const agent = firstUser?.info?.agent
       const bootstrap = agent
         ? getBootstrapForAgent(agent)
         : getBootstrapContent()
-      if (!bootstrap) return
 
-      // Inject bootstrap into first user message (once)
-      if (!firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
-        const ref = firstUser.parts[0]
-        firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap })
-      }
-
-      // Inject active goal reminder into last user message
-      if (!sessionID) return
-      const goal = readGoal(directory, sessionID)
-      if (goal && goal.status === 'active') {
-        const lastUser = output.messages.filter((m: any) => m.info.role === 'user').pop()
-        if (lastUser && lastUser.parts.length) {
-          const reminder = goalReminder(goal)
-          if (!lastUser.parts.some((p: any) => p.type === 'text' && p.text.includes('ACTIVE_GOAL'))) {
-            const ref = lastUser.parts[0]
-            lastUser.parts.push({ ...ref, type: 'text', text: reminder })
-          }
+      let goalReminderText: string | null = null
+      if (sessionID) {
+        const goal = readGoal(directory, sessionID)
+        if (goal?.status === 'active') {
+          goalReminderText = goalReminder(goal)
         }
       }
+
+      injectGoalAndBootstrap(output.messages, { bootstrap, goalReminder: goalReminderText })
     },
 
     tool: {
       handoff_session: createHandoffSessionTool(deps),
       set_goal: createSetGoalTool(deps),
+      fast_edit: fastEditTool,
+      fast_write: fastWriteTool,
     },
 
     event: async ({ event }: { event: any }) => {

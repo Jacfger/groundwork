@@ -61,6 +61,29 @@ export function clearGoal(directory: string, sessionID: string): boolean {
   return true
 }
 
+export interface InjectionParams {
+  bootstrap: string | null
+  goalReminder: string | null
+}
+
+export function injectGoalAndBootstrap(messages: any[], params: InjectionParams): void {
+  if (!messages.length) return
+
+  const firstUser = messages.find((m: any) => m.info?.role === 'user')
+  if (!firstUser?.parts?.length) return
+
+  if (params.bootstrap && !firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
+    firstUser.parts.unshift({ type: 'text', text: params.bootstrap, synthetic: true })
+  }
+
+  if (params.goalReminder) {
+    const lastUser = messages.filter((m: any) => m.info?.role === 'user').pop()
+    if (lastUser?.parts?.length && !lastUser.parts.some((p: any) => p.type === 'text' && p.text.includes('ACTIVE_GOAL'))) {
+      lastUser.parts.push({ type: 'text', text: params.goalReminder, synthetic: true })
+    }
+  }
+}
+
 export function goalReminder(goal: Goal): string {
   const criteria = goal.acceptanceCriteria
     .map((c, i) => `  ${i + 1}. ${c}`)

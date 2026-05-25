@@ -7,3 +7,4 @@ dist/
 test-*.ts
 test-*.mjs
 docs/prds/
+.opencode/goals/
