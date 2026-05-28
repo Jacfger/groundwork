@@ -61,26 +61,12 @@ export function clearGoal(directory: string, sessionID: string): boolean {
   return true
 }
 
-export interface InjectionParams {
-  bootstrap: string | null
-  goalReminder: string | null
-}
+export function injectGoalReminder(messages: any[], goalReminder: string | null): void {
+  if (!messages.length || !goalReminder) return
 
-export function injectGoalAndBootstrap(messages: any[], params: InjectionParams): void {
-  if (!messages.length) return
-
-  const firstUser = messages.find((m: any) => m.info?.role === 'user')
-  if (!firstUser?.parts?.length) return
-
-  if (params.bootstrap && !firstUser.parts.some((p: any) => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) {
-    firstUser.parts.unshift({ type: 'text', text: params.bootstrap, synthetic: true })
-  }
-
-  if (params.goalReminder) {
-    const lastUser = messages.filter((m: any) => m.info?.role === 'user').pop()
-    if (lastUser?.parts?.length && !lastUser.parts.some((p: any) => p.type === 'text' && p.text.includes('ACTIVE_GOAL'))) {
-      lastUser.parts.push({ type: 'text', text: params.goalReminder, synthetic: true })
-    }
+  const lastUser = messages.filter((m: any) => m.info?.role === 'user').pop()
+  if (lastUser?.parts?.length && !lastUser.parts.some((p: any) => p.type === 'text' && p.text.includes('ACTIVE_GOAL'))) {
+    lastUser.parts.push({ type: 'text', text: goalReminder, synthetic: true })
   }
 }
 

@@ -15,7 +15,7 @@ import { parseFileReferences, buildSyntheticFileParts, HANDOFF_COMMAND } from '.
 import { createHandoffSessionTool } from './tools/handoff-session.js'
 import { createSetGoalTool } from './tools/set-goal.js'
 import type { ToolDeps } from './tools/deps.js'
-import { readGoal, goalReminder, injectGoalAndBootstrap } from './lib/goal.js'
+import { readGoal, goalReminder, injectGoalReminder } from './lib/goal.js'
 import fastEditTool from './tools/fast-edit-edit.js'
 import fastWriteTool from './tools/fast-edit-write.js'
 
@@ -123,13 +123,19 @@ export const GroundworkPlugin = async (input: PluginInput) => {
       } catch {}
     },
 
-    'experimental.chat.messages.transform': async (_input: any, output: any) => {
-      const firstUser = output.messages.find((m: any) => m.info.role === 'user')
-      const sessionID = firstUser?.info?.sessionID
-      const agent = firstUser?.info?.agent
+    'experimental.chat.system.transform': async (_input: any, output: any) => {
+      const agent = _input?.agent || _input?.info?.agent
       const bootstrap = agent
         ? getBootstrapForAgent(agent)
         : getBootstrapContent()
+      if (bootstrap) {
+        (output.system ||= []).push(bootstrap)
+      }
+    },
+
+    'experimental.chat.messages.transform': async (_input: any, output: any) => {
+      const firstUser = output.messages.find((m: any) => m.info.role === 'user')
+      const sessionID = firstUser?.info?.sessionID
 
       let goalReminderText: string | null = null
       if (sessionID) {
@@ -139,7 +145,9 @@ export const GroundworkPlugin = async (input: PluginInput) => {
         }
       }
 
-      injectGoalAndBootstrap(output.messages, { bootstrap, goalReminder: goalReminderText })
+      if (goalReminderText) {
+        injectGoalReminder(output.messages, goalReminderText)
+      }
     },
 
     tool: {
